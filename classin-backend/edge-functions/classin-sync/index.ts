@@ -173,11 +173,30 @@ serve(async (req) => {
     classin_linked_at: new Date().toISOString(),
   }).eq("id", user.id);
 
+  // 가입 이전에 쌓인 클래스인 데이터를 이 회원에게 소급 연결
+  //   classin-hook 은 데이터를 "받는 시점"에만 member_id 를 매칭한다. 그래서 나중에
+  //   가입한 학생은 가입 전 성적·출결이 member_id 없이 남아 본인 화면에서 안 보인다.
+  //   여기서 UID 기준으로 메워준다. (구버전 PHP sync-user.php 가 하던 소급 연결)
+  const backfilled: Record<string, number> = {};
+  if (uid) {
+    for (const t of ["classin_scores", "classin_attendance", "classin_rewards", "classin_interactions"]) {
+      try {
+        const { data, error } = await supaService.from(t)
+          .update({ member_id: user.id })
+          .eq("student_uid", uid)
+          .is("member_id", null)
+          .select("student_uid");
+        if (!error) backfilled[t] = (data || []).length;
+      } catch (_e) { /* 표가 없어도 가입 자체는 계속 진행 */ }
+    }
+  }
+
   return json({
     ok: true,
     uid,
     existed:   [461, 135].includes(errno),
     matchedBy: errno === 461 ? "email" : (errno === 135 ? "telephone" : "new"),
     role,
+    backfilled,
   });
 });
