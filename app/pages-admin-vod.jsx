@@ -57,8 +57,10 @@ function vodDurationLabel(sec) {
 // 비메오 계정에서 쇼케이스/영상 목록을 불러와 골라 담는 패널
 const VIMEO_PICKER_PER_PAGE = 30;
 // mode="video" — 쇼케이스 탭을 숨기고 단일 영상만 고르게 한다(차시별 영상 선택용)
+// mode="showcase" — 단일 영상 탭을 숨기고 쇼케이스만 고르게 한다("Showcase 전체 가져오기"의 쇼케이스 선택용)
 function VimeoPicker({ onPick, onClose, mode }) {
   const videoOnly = mode === "video";
+  const showcaseOnly = mode === "showcase";
   const [tab, setTab] = useStV(videoOnly ? "videos" : "showcases"); // showcases | videos
   const [q, setQ] = useStV("");
   const [items, setItems] = useStV([]);
@@ -97,6 +99,8 @@ function VimeoPicker({ onPick, onClose, mode }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
         {videoOnly ? (
           <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ci-muted)" }}>단일 영상에서 선택</div>
+        ) : showcaseOnly ? (
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ci-muted)" }}>쇼케이스에서 선택</div>
         ) : (
           <div style={{ display: "flex", gap: 6 }}>
             <button type="button" onClick={() => setTab("showcases")}
@@ -147,13 +151,198 @@ function VimeoPicker({ onPick, onClose, mode }) {
 // 차시(lesson) 하나 — order_index 는 저장 시 화면 순서(위→아래)대로 10,20,30…으로 다시 매겨진다
 function emptyLesson() { return { title: "", vimeo_id: "", vimeo_hash: "", duration_sec: 0, _vimeoName: "" }; }
 
+// Showcase 안의 영상을 전체 페이지 끝까지 조회 — 기존 vimeo-list(type=showcase-videos)를 그대로 재사용.
+// "더 불러오기"를 반복 클릭하지 않아도 되도록, total 을 기준으로 자동으로 다음 page 를 계속 호출한다.
+// 무한루프 방지용 안전 상한만 둔다(쇼케이스 하나당 최대 2000개 영상까지 커버).
+async function fetchAllShowcaseVideos(showcaseId) {
+  const perPage = 100;
+  const maxPages = 20;
+  let page = 1, all = [], total = Infinity;
+  while (page <= maxPages && all.length < total) {
+    const qs = "?type=showcase-videos&showcase_id=" + encodeURIComponent(showcaseId) + "&per_page=" + perPage + "&page=" + page;
+    const r = await vimeoListCall(qs);
+    if (!r.ok) return { ok: false, msg: r.msg || "불러오기 실패" };
+    total = Number(r.total) || 0;
+    if (!r.items || r.items.length === 0) break; // 빈 페이지가 오면 total 값과 무관하게 중단(안전장치)
+    all = all.concat(r.items);
+    page += 1;
+  }
+  return { ok: true, items: all, total };
+}
+
+// 영상 제목의 "N강" 패턴에서 차시 번호를 추출 — 업로드 순서/날짜는 절대 사용하지 않는다.
+// 서로 다른 번호가 2개 이상 매칭되면(제목이 모호하면) null 을 돌려줘 자동분류하지 않고 미분류로 남긴다.
+function extractLessonNumber(title) {
+  const re = /(\d{1,3})\s*강(?=[_\s]|$)/g;
+  const nums = [...String(title || "").matchAll(re)].map((m) => Number(m[1]));
+  if (nums.length === 0) return null;
+  const uniq = [...new Set(nums)];
+  return uniq.length === 1 ? uniq[0] : null;
+}
+
+// Showcase 하나를 골라 그 안의 영상 전체를 "N강" 기준으로 자동 분류·정렬해 검증 결과를 보여주는 패널.
+// 이 패널의 모든 동작(조회/채우기)은 화면 상태만 바꾼다 — DB 저장은 LessonsEditor 바깥의 "차시 저장"
+// 버튼(vod_replace_course_lessons RPC)을 눌러야만 일어난다.
+function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
+  const [showcaseId, setShowcaseId] = useStV(defaultShowcaseId || "");
+  const [pickerOpen, setPickerOpen] = useStV(!defaultShowcaseId);
+  const [phase, setPhase] = useStV(defaultShowcaseId ? "ready" : "pick"); // pick | ready | loading | reviewing | error
+  const [items, setItems] = useStV([]);
+  const [expectedTotal, setExpectedTotal] = useStV(0);
+  const [err, setErr] = useStV("");
+  const [confirmMode, setConfirmMode] = useStV(false);
+
+  const runFetch = (id) => {
+    setPhase("loading"); setErr("");
+    fetchAllShowcaseVideos(id).then((r) => {
+      if (!r.ok) { setPhase("error"); setErr(r.msg || "불러오기 실패"); return; }
+      const classified = r.items.map((it) => ({ ...it, _num: extractLessonNumber(it.name) }));
+      const nums = classified.filter((c) => c._num != null).map((c) => c._num);
+      setExpectedTotal(nums.length ? Math.max(...nums) : 0);
+      setItems(classified);
+      setPhase("reviewing");
+    });
+  };
+
+  const pickShowcase = (item) => {
+    const id = String(item.id || "");
+    setShowcaseId(id);
+    setPickerOpen(false);
+    runFetch(id);
+  };
+
+  const byNum = {};
+  items.forEach((c) => { if (c._num != null) (byNum[c._num] = byNum[c._num] || []).push(c); });
+  const unclassified = items.filter((c) => c._num == null);
+  const duplicateNums = Object.keys(byNum).map(Number).filter((n) => byNum[n].length > 1).sort((a, b) => a - b);
+  const uniqueNums = Object.keys(byNum).map(Number);
+  const recognizedCount = items.length - unclassified.length;
+  const missing = [];
+  for (let n = 1; n <= expectedTotal; n++) if (!byNum[n]) missing.push(n);
+  const allMatched = phase === "reviewing" && expectedTotal > 0
+    && missing.length === 0 && duplicateNums.length === 0 && unclassified.length === 0 && uniqueNums.length === expectedTotal;
+
+  // 번호가 "고유하게" 인식된 영상만 채우기 대상 — 중복 번호는 자동으로 하나를 고르지 않는다.
+  const fillable = items.filter((c) => c._num != null && byNum[c._num].length === 1).slice().sort((a, b) => a._num - b._num);
+  const hasExistingContent = lessons.some((l) => l.title.trim() || l.vimeo_id);
+
+  const doFill = (mode) => {
+    const newLessons = fillable.map((it) => {
+      const media = window.parseVimeoMedia(it.link || String(it.id));
+      return {
+        title: it.name || "",
+        vimeo_id: media.type === "video" ? media.id : String(it.id || ""),
+        vimeo_hash: media.type === "video" ? (media.hash || "") : "",
+        duration_sec: Number(it.duration) || 0,
+        _vimeoName: it.name || "",
+      };
+    });
+    onFill(newLessons, mode);
+    onClose();
+  };
+
+  return (
+    <div className="ci-card ci-card-pad" style={{ marginBottom: 14, background: "#fafafa" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ci-muted)" }}>Showcase 전체 가져오기</div>
+        <button type="button" className="ci-act" onClick={onClose}><Icon name="close" size={12} /> 닫기</button>
+      </div>
+
+      {phase === "pick" && !pickerOpen && (
+        <div>
+          <p style={{ fontSize: 12.5, color: "var(--ci-muted)", marginBottom: 10 }}>가져올 Vimeo 쇼케이스를 선택하세요.</p>
+          <button type="button" className="ci-act navy" onClick={() => setPickerOpen(true)}><Icon name="signal" size={12} /> 쇼케이스 선택</button>
+        </div>
+      )}
+      {pickerOpen && (
+        <VimeoPicker mode="showcase" onPick={pickShowcase} onClose={() => setPickerOpen(false)} />
+      )}
+
+      {phase === "ready" && !pickerOpen && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 12.5 }}>현재 연결된 Showcase <strong>{showcaseId}</strong>에서 가져올까요?</span>
+          <button type="button" className="ci-act navy" onClick={() => runFetch(showcaseId)}>이 Showcase에서 가져오기</button>
+          <button type="button" className="ci-act" onClick={() => { setPhase("pick"); setPickerOpen(true); }}>다른 Showcase 선택</button>
+        </div>
+      )}
+
+      {phase === "loading" && <div style={{ fontSize: 13, color: "var(--ci-muted)", padding: "12px 0" }}>Showcase 영상 전체를 불러오는 중…</div>}
+      {phase === "error" && <div style={{ fontSize: 13, color: "var(--ci-bad)", padding: "12px 0" }}>{err}</div>}
+
+      {phase === "reviewing" && (
+        <div>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", marginBottom: 10, fontSize: 12.5 }}>
+            <span>Showcase 영상 <strong>{items.length}</strong>개</span>
+            <span>강의번호 인식 <strong>{recognizedCount}</strong>개</span>
+            <span>예상 차시:
+              <input type="number" min="0" value={expectedTotal}
+                onChange={(e) => setExpectedTotal(Math.max(0, Number(e.target.value) || 0))}
+                style={{ ...inStyle, width: 64, height: 26, marginLeft: 6, display: "inline-block" }} /> 강
+            </span>
+          </div>
+          <div style={{ display: "grid", gap: 4, fontSize: 12.5, marginBottom: 10 }}>
+            <div>누락: {missing.length ? missing.map((n) => n + "강").join(", ") : "없음"}</div>
+            <div>중복: {duplicateNums.length ? duplicateNums.map((n) => n + "강").join(", ") : "없음"}</div>
+            <div>미분류: {unclassified.length}개</div>
+            <div style={{ fontWeight: 700, color: allMatched ? "var(--ci-ok)" : "var(--ci-bad)" }}>
+              {allMatched ? ("✓ 1~" + expectedTotal + "강 전체 확인 완료") : "⚠ 전체 매칭 확인 필요"}
+            </div>
+          </div>
+
+          {duplicateNums.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>중복 후보 (자동으로 선택하지 않음 — 직접 확인 필요)</div>
+              {duplicateNums.map((n) => (
+                <div key={n} style={{ fontSize: 12, marginBottom: 4 }}>
+                  <strong>{n}강</strong>
+                  <ul style={{ margin: "2px 0 0 18px", padding: 0 }}>
+                    {byNum[n].map((it) => <li key={it.id}>{it.name} · ID {it.id}</li>)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          )}
+          {unclassified.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>미분류 영상(번호를 찾지 못함)</div>
+              <ul style={{ margin: "2px 0 0 18px", padding: 0, fontSize: 12 }}>
+                {unclassified.map((it) => <li key={it.id}>{it.name} · ID {it.id}</li>)}
+              </ul>
+            </div>
+          )}
+
+          <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "0 0 10px", lineHeight: 1.5 }}>
+            번호가 고유하게 인식된 {fillable.length}개만 아래 "채우기"에 포함됩니다 · 중복/미분류 영상은 필요하면 개별 "Vimeo에서 선택"으로 직접 추가해주세요.
+          </p>
+
+          {!confirmMode ? (
+            <button type="button" className="ci-act navy" disabled={fillable.length === 0}
+              onClick={() => (hasExistingContent ? setConfirmMode(true) : doFill("replace"))}>
+              <Icon name="check" size={12} /> 이 목록을 차시에 채우기 ({fillable.length}개)
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12.5 }}>현재 차시 목록이 이미 있습니다 —</span>
+              <button type="button" className="ci-act navy" onClick={() => doFill("replace")}>기존 목록 교체</button>
+              <button type="button" className="ci-act" onClick={() => doFill("append")}>기존 목록 뒤에 추가</button>
+              <button type="button" className="ci-act" onClick={() => setConfirmMode(false)}>취소</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 강좌 하나의 차시 목록을 구성/편집하는 패널 — 새 강좌 개설과 기존 강좌 "차시 관리"에서 공용으로 쓴다.
 // VimeoPicker(mode="video") 를 그대로 재사용하고, 새 Vimeo API 는 추가하지 않는다.
-function LessonsEditor({ lessons, onChange }) {
+function LessonsEditor({ lessons, onChange, defaultShowcaseId }) {
   const [pickerFor, setPickerFor] = useStV(null); // 현재 Vimeo 선택 중인 차시의 index
+  const [importOpen, setImportOpen] = useStV(false);
   const up = (i, patch) => onChange(lessons.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const add = () => onChange([...lessons, emptyLesson()]);
   const remove = (i) => onChange(lessons.filter((_, idx) => idx !== i));
+  const fillFromImport = (newLessons, mode) => onChange(mode === "append" ? [...lessons, ...newLessons] : newLessons);
   const move = (i, dir) => {
     const j = i + dir;
     if (j < 0 || j >= lessons.length) return;
@@ -207,9 +396,20 @@ function LessonsEditor({ lessons, onChange }) {
           </div>
         ))}
       </div>
-      <button type="button" className="ci-act navy" style={{ marginTop: 10 }} onClick={add}>
-        <Icon name="plus" size={12} /> 차시 추가
-      </button>
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+        <button type="button" className="ci-act navy" onClick={add}>
+          <Icon name="plus" size={12} /> 차시 추가
+        </button>
+        <button type="button" className={"ci-act" + (importOpen ? " navy" : "")} onClick={() => setImportOpen((v) => !v)}>
+          <Icon name="signal" size={12} /> Showcase 전체 가져오기
+        </button>
+      </div>
+      {importOpen && (
+        <div style={{ marginTop: 10 }}>
+          <ShowcaseImportPanel defaultShowcaseId={defaultShowcaseId} lessons={lessons}
+            onFill={fillFromImport} onClose={() => setImportOpen(false)} />
+        </div>
+      )}
       <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "8px 0 0", lineHeight: 1.5 }}>
         차시가 없어도 강좌는 저장됩니다 · 기존 "Vimeo 링크(쇼케이스/단일 영상)"과는 별개로, 강좌 안에 여러 차시를 개별 영상으로 구성할 때 사용합니다.
       </p>
@@ -600,7 +800,7 @@ function LessonsManagePanel({ course, onClose, showToast }) {
       {!loading && err && <div style={{ fontSize: 13, color: "var(--ci-bad)" }}>{err}</div>}
       {!loading && !err && (
         <>
-          <LessonsEditor lessons={lessons} onChange={setLessons} />
+          <LessonsEditor lessons={lessons} onChange={setLessons} defaultShowcaseId={course.showcaseId} />
           <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
             <button className="ci-act navy" onClick={save} disabled={saving}>
               <Icon name="check" size={13} /> {saving ? "저장 중…" : "차시 저장"}
@@ -734,7 +934,7 @@ function VodAddForm({ onClose, onAdded }) {
           {pickerOpen && <div style={{ marginTop: 10 }}><VimeoPicker onPick={pickFromVimeo} onClose={() => setPickerOpen(false)} /></div>}
         </div>
         <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--ci-line)", paddingTop: 14, marginTop: 4 }}>
-          <LessonsEditor lessons={lessons} onChange={setLessons} />
+          <LessonsEditor lessons={lessons} onChange={setLessons} defaultShowcaseId={media.type === "showcase" ? media.id : ""} />
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
