@@ -29,6 +29,115 @@ function vodFileToThumb(file, cb) {
 
 const VOD_COLORS = ["ink", "cream", "accent", "deep"];
 
+// Vimeo 목록 조회 — Edge Function(vimeo-list) 호출 (classin-roster/bbb-room 과 동일한 인증 방식)
+async function vimeoListCall(qs) {
+  const base = (window.SUPABASE_URL || "") + "/functions/v1/vimeo-list";
+  let bearer = window.SUPABASE_ANON_KEY || "";
+  try {
+    const sb = window.getSupabase && window.getSupabase();
+    const { data: { session } } = await sb.auth.getSession();
+    if (session && session.access_token) bearer = session.access_token;
+  } catch (e) {}
+  try {
+    const res = await fetch(base + qs, {
+      headers: { Authorization: "Bearer " + bearer, apikey: window.SUPABASE_ANON_KEY || "" },
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.ok === false) return { ok: false, msg: json.msg || ("HTTP " + res.status) };
+    return json;
+  } catch (e) { return { ok: false, msg: "네트워크 오류: " + String(e) }; }
+}
+
+function vodDurationLabel(sec) {
+  sec = Number(sec) || 0;
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m + "분 " + String(s).padStart(2, "0") + "초";
+}
+
+// 비메오 계정에서 쇼케이스/영상 목록을 불러와 골라 담는 패널
+const VIMEO_PICKER_PER_PAGE = 30;
+function VimeoPicker({ onPick, onClose }) {
+  const [tab, setTab] = useStV("showcases"); // showcases | videos
+  const [q, setQ] = useStV("");
+  const [items, setItems] = useStV([]);
+  const [page, setPage] = useStV(1);
+  const [total, setTotal] = useStV(0);
+  const [loading, setLoading] = useStV(true);
+  const [loadingMore, setLoadingMore] = useStV(false);
+  const [err, setErr] = useStV("");
+
+  const load = React.useCallback((t, query, p, append) => {
+    if (append) setLoadingMore(true); else { setLoading(true); setItems([]); }
+    setErr("");
+    const qs = "?type=" + t + "&per_page=" + VIMEO_PICKER_PER_PAGE + "&page=" + p
+      + (query ? "&q=" + encodeURIComponent(query) : "");
+    vimeoListCall(qs).then((r) => {
+      setLoading(false); setLoadingMore(false);
+      if (!r.ok) { setErr(r.msg || "불러오기 실패"); if (!append) setItems([]); return; }
+      setTotal(Number(r.total) || 0);
+      setItems((prev) => append ? [...prev, ...(r.items || [])] : (r.items || []));
+    });
+  }, []);
+
+  // 탭 전환은 즉시, 검색어 입력은 살짝 지연(debounce) 후 1페이지부터 다시 조회 —
+  // Vimeo API 서버 검색(query 파라미터)을 그대로 사용한다.
+  React.useEffect(() => {
+    setPage(1);
+    const t = setTimeout(() => load(tab, q, 1, false), q ? 400 : 0);
+    return () => clearTimeout(t);
+  }, [tab, q, load]);
+
+  const hasMore = !loading && !err && items.length < total;
+  const loadMore = () => { const next = page + 1; setPage(next); load(tab, q, next, true); };
+
+  return (
+    <div className="ci-card ci-card-pad" style={{ marginBottom: 14, background: "#fafafa" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <button type="button" onClick={() => setTab("showcases")}
+            className={"ci-act" + (tab === "showcases" ? " navy" : "")}>쇼케이스</button>
+          <button type="button" onClick={() => setTab("videos")}
+            className={"ci-act" + (tab === "videos" ? " navy" : "")}>단일 영상</button>
+        </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="제목으로 검색…"
+          style={{ ...inStyle, height: 32, width: 180 }} />
+        <button type="button" className="ci-act" onClick={onClose}><Icon name="close" size={12} /> 닫기</button>
+      </div>
+      {loading && <div style={{ fontSize: 13, color: "var(--ci-muted)", padding: "12px 0" }}>Vimeo에서 불러오는 중…</div>}
+      {!loading && err && <div style={{ fontSize: 13, color: "var(--ci-bad)", padding: "12px 0" }}>{err}</div>}
+      {!loading && !err && items.length === 0 && (
+        <div style={{ fontSize: 13, color: "var(--ci-muted)", padding: "12px 0" }}>목록이 비어 있습니다.</div>
+      )}
+      {!loading && !err && items.length > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 360, overflowY: "auto" }}>
+            {items.map((it) => (
+              <button key={it.id} type="button" onClick={() => onPick(it)}
+                style={{ textAlign: "left", border: "1px solid var(--ci-line)", borderRadius: 8, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0 }}>
+                <div style={{ width: "100%", aspectRatio: "16/9", background: "#eee", backgroundImage: it.thumbnail ? `url(${it.thumbnail})` : "none", backgroundSize: "cover", backgroundPosition: "center" }} />
+                <div style={{ padding: 8 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.3, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--ci-muted)" }}>
+                    {tab === "showcases" ? (it.videoCount != null ? it.videoCount + "개 영상" : "쇼케이스") : vodDurationLabel(it.duration)}
+                    {it.privacy ? " · " + it.privacy : ""}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+          {hasMore && (
+            <div style={{ textAlign: "center", marginTop: 10 }}>
+              <button type="button" className="ci-act" disabled={loadingMore} onClick={loadMore}>
+                {loadingMore ? "불러오는 중…" : "더 불러오기 (" + items.length + " / " + total + ")"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 const CUSTOM_INS = "__custom__::";
 // 강사 선택 — 등록된 강사가 없으면(또는 맞는 강사가 없으면) '직접 입력'으로 이름만 받는다
 function InstructorPicker({ value, onChange }) {
@@ -337,8 +446,14 @@ function VodCourseRow({ course, open, onToggle, onChange, showToast }) {
 
 function VodAddForm({ onClose, onAdded }) {
   const [f, setF] = useStV({ title: "", subject: (SUBJECTS[0] || {}).id || "", instructor: (INSTRUCTORS[0] || {}).id || "", level: "", className: "", salePrice: 0, showcaseInput: "", visibility: "members" });
+  const [pickerOpen, setPickerOpen] = useStV(false);
   const up = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const media = window.parseVimeoMedia(f.showcaseInput);
+  const pickFromVimeo = (item) => {
+    up("showcaseInput", item.link || String(item.id));
+    if (!f.title.trim() && item.name) up("title", item.name);
+    setPickerOpen(false);
+  };
 
   const create = () => {
     if (!f.title.trim()) { alert("강좌명을 입력하세요"); return; }
@@ -410,8 +525,14 @@ function VodAddForm({ onClose, onAdded }) {
         </div>
         <div style={{ gridColumn: "1 / -1" }}>
           <label className="vod-lab">Vimeo 링크 — 쇼케이스 또는 단일 영상 (선택 — 나중에 넣어도 됨)</label>
-          <input value={f.showcaseInput} onChange={(e) => up("showcaseInput", e.target.value)} placeholder="https://vimeo.com/showcase/123  또는  https://vimeo.com/987654321" style={inStyle} />
+          <div style={{ display: "flex", gap: 8 }}>
+            <input value={f.showcaseInput} onChange={(e) => up("showcaseInput", e.target.value)} placeholder="https://vimeo.com/showcase/123  또는  https://vimeo.com/987654321" style={{ ...inStyle, flex: 1 }} />
+            <button type="button" className={"ci-act" + (pickerOpen ? " navy" : "")} onClick={() => setPickerOpen((v) => !v)} style={{ whiteSpace: "nowrap" }}>
+              <Icon name="signal" size={12} /> 비메오에서 불러오기
+            </button>
+          </div>
           {f.showcaseInput && <div style={{ marginTop: 6, fontSize: 12, color: media.type ? "var(--ci-ok)" : "var(--ci-bad)" }}>{media.type === "showcase" ? "✓ 쇼케이스 인식됨 · ID " + media.id : media.type === "video" ? ("✓ 단일 영상 인식됨 · ID " + media.id + (media.hash ? " · 해시 " + media.hash : "")) : "Vimeo ID를 찾지 못했어요"}</div>}
+          {pickerOpen && <div style={{ marginTop: 10 }}><VimeoPicker onPick={pickFromVimeo} onClose={() => setPickerOpen(false)} /></div>}
         </div>
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
