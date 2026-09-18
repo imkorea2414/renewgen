@@ -56,8 +56,10 @@ function vodDurationLabel(sec) {
 
 // 비메오 계정에서 쇼케이스/영상 목록을 불러와 골라 담는 패널
 const VIMEO_PICKER_PER_PAGE = 30;
-function VimeoPicker({ onPick, onClose }) {
-  const [tab, setTab] = useStV("showcases"); // showcases | videos
+// mode="video" — 쇼케이스 탭을 숨기고 단일 영상만 고르게 한다(차시별 영상 선택용)
+function VimeoPicker({ onPick, onClose, mode }) {
+  const videoOnly = mode === "video";
+  const [tab, setTab] = useStV(videoOnly ? "videos" : "showcases"); // showcases | videos
   const [q, setQ] = useStV("");
   const [items, setItems] = useStV([]);
   const [page, setPage] = useStV(1);
@@ -93,12 +95,16 @@ function VimeoPicker({ onPick, onClose }) {
   return (
     <div className="ci-card ci-card-pad" style={{ marginBottom: 14, background: "#fafafa" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button type="button" onClick={() => setTab("showcases")}
-            className={"ci-act" + (tab === "showcases" ? " navy" : "")}>쇼케이스</button>
-          <button type="button" onClick={() => setTab("videos")}
-            className={"ci-act" + (tab === "videos" ? " navy" : "")}>단일 영상</button>
-        </div>
+        {videoOnly ? (
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ci-muted)" }}>단일 영상에서 선택</div>
+        ) : (
+          <div style={{ display: "flex", gap: 6 }}>
+            <button type="button" onClick={() => setTab("showcases")}
+              className={"ci-act" + (tab === "showcases" ? " navy" : "")}>쇼케이스</button>
+            <button type="button" onClick={() => setTab("videos")}
+              className={"ci-act" + (tab === "videos" ? " navy" : "")}>단일 영상</button>
+          </div>
+        )}
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="제목으로 검색…"
           style={{ ...inStyle, height: 32, width: 180 }} />
         <button type="button" className="ci-act" onClick={onClose}><Icon name="close" size={12} /> 닫기</button>
@@ -136,6 +142,93 @@ function VimeoPicker({ onPick, onClose }) {
       )}
     </div>
   );
+}
+
+// 차시(lesson) 하나 — order_index 는 저장 시 화면 순서(위→아래)대로 10,20,30…으로 다시 매겨진다
+function emptyLesson() { return { title: "", vimeo_id: "", vimeo_hash: "", duration_sec: 0, _vimeoName: "" }; }
+
+// 강좌 하나의 차시 목록을 구성/편집하는 패널 — 새 강좌 개설과 기존 강좌 "차시 관리"에서 공용으로 쓴다.
+// VimeoPicker(mode="video") 를 그대로 재사용하고, 새 Vimeo API 는 추가하지 않는다.
+function LessonsEditor({ lessons, onChange }) {
+  const [pickerFor, setPickerFor] = useStV(null); // 현재 Vimeo 선택 중인 차시의 index
+  const up = (i, patch) => onChange(lessons.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const add = () => onChange([...lessons, emptyLesson()]);
+  const remove = (i) => onChange(lessons.filter((_, idx) => idx !== i));
+  const move = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= lessons.length) return;
+    const next = lessons.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const pickFromVimeo = (i, item) => {
+    const media = window.parseVimeoMedia(item.link || String(item.id));
+    up(i, {
+      vimeo_id: media.type === "video" ? media.id : String(item.id || ""),
+      vimeo_hash: media.type === "video" ? (media.hash || "") : "",
+      duration_sec: Number(item.duration) || 0,
+      _vimeoName: item.name || "",
+      title: lessons[i].title.trim() ? lessons[i].title : (item.name || ""),
+    });
+    setPickerFor(null);
+  };
+
+  return (
+    <div>
+      <label className="vod-lab">차시 구성</label>
+      <div style={{ display: "grid", gap: 10 }}>
+        {lessons.map((l, i) => (
+          <div key={i} className="ci-card" style={{ padding: 12, background: "#fafafa" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span className="ci-badge navy" style={{ fontSize: 10.5, flexShrink: 0 }}>{i + 1}강</span>
+              <input value={l.title} onChange={(e) => up(i, { title: e.target.value })}
+                placeholder="차시명 (예: 문학의 개념)" style={{ ...inStyle, flex: 1 }} />
+              <button type="button" className="ci-act" disabled={i === 0} onClick={() => move(i, -1)} title="위로">
+                <span style={{ display: "inline-flex", transform: "rotate(180deg)" }}><Icon name="chevronDown" size={12} /></span>
+              </button>
+              <button type="button" className="ci-act" disabled={i === lessons.length - 1} onClick={() => move(i, 1)} title="아래로"><Icon name="chevronDown" size={12} /></button>
+              <button type="button" className="ci-act" onClick={() => remove(i)} style={{ color: "var(--ci-bad)" }}><Icon name="trash" size={12} /> 삭제</button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, color: l.vimeo_id ? "var(--ci-ok)" : "var(--ci-muted)" }}>
+                {l.vimeo_id
+                  ? <><Icon name="check" size={11} /> {l._vimeoName || ("Vimeo 영상 · ID " + l.vimeo_id)}{l.duration_sec ? " · " + vodDurationLabel(l.duration_sec) : ""}</>
+                  : "아직 영상을 선택하지 않았습니다"}
+              </span>
+              <button type="button" className={"ci-act" + (pickerFor === i ? " navy" : "")} onClick={() => setPickerFor(pickerFor === i ? null : i)}>
+                <Icon name="signal" size={12} /> Vimeo에서 선택
+              </button>
+            </div>
+            {pickerFor === i && (
+              <div style={{ marginTop: 10 }}>
+                <VimeoPicker mode="video" onPick={(item) => pickFromVimeo(i, item)} onClose={() => setPickerFor(null)} />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <button type="button" className="ci-act navy" style={{ marginTop: 10 }} onClick={add}>
+        <Icon name="plus" size={12} /> 차시 추가
+      </button>
+      <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "8px 0 0", lineHeight: 1.5 }}>
+        차시가 없어도 강좌는 저장됩니다 · 기존 "Vimeo 링크(쇼케이스/단일 영상)"과는 별개로, 강좌 안에 여러 차시를 개별 영상으로 구성할 때 사용합니다.
+      </p>
+    </div>
+  );
+}
+
+// LessonsEditor 의 화면 배열 → RPC 에 보낼 lessons jsonb 배열(order_index 10,20,30… 부여, 빈 차시는 제외)
+function lessonsToPayload(lessons) {
+  return lessons
+    .filter((l) => l.title.trim() || l.vimeo_id)
+    .map((l, i) => ({
+      order_index: (i + 1) * 10,
+      title: l.title.trim() || (l._vimeoName || (i + 1) + "강"),
+      vimeo_id: l.vimeo_id || "",
+      vimeo_hash: l.vimeo_hash || "",
+      duration_sec: Number(l.duration_sec) || 0,
+      is_free: false,
+    }));
 }
 
 const CUSTOM_INS = "__custom__::";
@@ -301,6 +394,8 @@ function VodCourseRow({ course, open, onToggle, onChange, showToast }) {
     showToast("강좌가 삭제되었습니다");
   };
 
+  const [lessonsOpen, setLessonsOpen] = useStV(false);
+
   return (
     <div className="ci-card" style={{ overflow: "hidden" }}>
       {/* 요약 행 */}
@@ -331,8 +426,16 @@ function VodCourseRow({ course, open, onToggle, onChange, showToast }) {
             <span style={{ fontSize: 12, color: "var(--ci-muted)" }}>{ins?.name || "강사 미지정"}</span>
           </div>
         </div>
-        <button className="ci-act" onClick={onToggle}>{open ? "닫기" : <><Icon name="edit" size={12} /> 편집</>}</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="ci-act" onClick={() => setLessonsOpen((v) => !v)}>
+            {lessonsOpen ? "닫기" : <><Icon name="book" size={12} /> 차시 관리</>}
+          </button>
+          <button className="ci-act" onClick={onToggle}>{open ? "닫기" : <><Icon name="edit" size={12} /> 편집</>}</button>
+        </div>
       </div>
+
+      {/* 차시 관리 패널 */}
+      {lessonsOpen && <LessonsManagePanel course={course} onClose={() => setLessonsOpen(false)} showToast={showToast} />}
 
       {/* 편집 패널 */}
       {open && (
@@ -444,9 +547,67 @@ function VodCourseRow({ course, open, onToggle, onChange, showToast }) {
   );
 }
 
+// 기존 강좌의 차시 목록을 불러와 편집 — 기본적으로 lessons만 바꾸고 courses 는 건드리지 않는다
+// (course_patch 없이 vod_replace_course_lessons 호출 — 강좌 정보 자체를 바꾸려면 위의 "편집" 패널을 쓴다)
+function LessonsManagePanel({ course, onClose, showToast }) {
+  const [loading, setLoading] = useStV(true);
+  const [err, setErr] = useStV("");
+  const [lessons, setLessons] = useStV([]);
+  const [saving, setSaving] = useStV(false);
+
+  React.useEffect(() => {
+    let alive = true;
+    window.vodFetchLessons(course.id).then((r) => {
+      if (!alive) return;
+      setLoading(false);
+      if (!r.ok) { setErr(r.error || "차시를 불러오지 못했습니다"); return; }
+      setLessons((r.lessons || []).map((row) => ({
+        title: row.title || "",
+        vimeo_id: row.vimeo_id || "",
+        vimeo_hash: row.vimeo_hash || "",
+        duration_sec: row.duration_sec || 0,
+        _vimeoName: "",
+      })));
+    });
+    return () => { alive = false; };
+  }, [course.id]);
+
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    const r = await window.vodReplaceCourseLessons(course.id, lessonsToPayload(lessons), null);
+    setSaving(false);
+    if (!r.ok) { alert("차시 저장 실패: " + (r.error || "알 수 없는 오류")); return; }
+    showToast("차시가 저장되었습니다");
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--ci-line)", padding: 18, background: "var(--ci-bg)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <strong style={{ fontSize: 14 }}>차시 관리 · {course.title}</strong>
+        <button type="button" className="ci-act" onClick={onClose}><Icon name="close" size={12} /> 닫기</button>
+      </div>
+      {loading && <div style={{ fontSize: 13, color: "var(--ci-muted)" }}>차시 목록을 불러오는 중…</div>}
+      {!loading && err && <div style={{ fontSize: 13, color: "var(--ci-bad)" }}>{err}</div>}
+      {!loading && !err && (
+        <>
+          <LessonsEditor lessons={lessons} onChange={setLessons} />
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+            <button className="ci-act navy" onClick={save} disabled={saving}>
+              <Icon name="check" size={13} /> {saving ? "저장 중…" : "차시 저장"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function VodAddForm({ onClose, onAdded }) {
   const [f, setF] = useStV({ title: "", subject: (SUBJECTS[0] || {}).id || "", instructor: (INSTRUCTORS[0] || {}).id || "", level: "", className: "", salePrice: 0, showcaseInput: "", visibility: "members" });
   const [pickerOpen, setPickerOpen] = useStV(false);
+  const [lessons, setLessons] = useStV([]);
+  const [saving, setSaving] = useStV(false);
   const up = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const media = window.parseVimeoMedia(f.showcaseInput);
   const pickFromVimeo = (item) => {
@@ -455,13 +616,17 @@ function VodAddForm({ onClose, onAdded }) {
     setPickerOpen(false);
   };
 
-  const create = () => {
+  const create = async () => {
     if (!f.title.trim()) { alert("강좌명을 입력하세요"); return; }
+    if (saving) return;
+    setSaving(true);
+
     const id = "vod-" + Date.now().toString(36);
     const n = String((window.COURSES || []).length + 1).padStart(2, "0");
-    const course = {
+    const instructorId = resolveInstructor(f.instructor);
+    const siteCourse = {
       id, no: n, title: f.title.trim(),
-      subtitle: "", instructor: resolveInstructor(f.instructor), subject: f.subject,
+      subtitle: "", instructor: instructorId, subject: f.subject,
       level: f.level.trim() || "전체", format: "VOD",
       classNames: f.className.trim(),
       lessons: 0, hours: 0, weeks: 0,
@@ -475,7 +640,28 @@ function VodAddForm({ onClose, onAdded }) {
       visibility: f.visibility === "public" ? "public" : "members",
       description: "", syllabus: [], includes: [],
     };
-    window.addCustomCourse(course);
+    // 실제 courses 테이블용 값 — site_store 표시용(siteCourse)과 별개로, DB 컬럼에 대응하는 값만 담는다.
+    const courseRow = {
+      id,
+      title: siteCourse.title,
+      instructor: instructorId,
+      subject: f.subject,
+      level: siteCourse.level,
+      price: siteCourse.price,
+      is_free: false,
+      showcase_id: siteCourse.showcaseId,
+      vimeo_id: siteCourse.vimeoId,
+      vimeo_hash: siteCourse.vimeoHash,
+      visibility: siteCourse.visibility,
+    };
+
+    const r = await window.vodCreateCourseWithLessons(courseRow, lessonsToPayload(lessons), siteCourse);
+    setSaving(false);
+    if (!r.ok) { alert("강좌 저장 실패: " + (r.error || "알 수 없는 오류")); return; }
+
+    // RPC가 courses+lessons+site_store 를 이미 원자적으로 저장했으므로, 여기서는
+    // 현재 브라우저의 로컬 캐시/화면(window.COURSES)만 즉시 반영한다(중복 클라우드 push는 무해함).
+    window.addCustomCourse(siteCourse);
     onAdded(id);
   };
 
@@ -534,10 +720,15 @@ function VodAddForm({ onClose, onAdded }) {
           {f.showcaseInput && <div style={{ marginTop: 6, fontSize: 12, color: media.type ? "var(--ci-ok)" : "var(--ci-bad)" }}>{media.type === "showcase" ? "✓ 쇼케이스 인식됨 · ID " + media.id : media.type === "video" ? ("✓ 단일 영상 인식됨 · ID " + media.id + (media.hash ? " · 해시 " + media.hash : "")) : "Vimeo ID를 찾지 못했어요"}</div>}
           {pickerOpen && <div style={{ marginTop: 10 }}><VimeoPicker onPick={pickFromVimeo} onClose={() => setPickerOpen(false)} /></div>}
         </div>
+        <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--ci-line)", paddingTop: 14, marginTop: 4 }}>
+          <LessonsEditor lessons={lessons} onChange={setLessons} />
+        </div>
       </div>
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
-        <button className="ci-act" onClick={onClose}>취소</button>
-        <button className="ci-act navy" onClick={create}><Icon name="check" size={13} /> 개설하기</button>
+        <button className="ci-act" onClick={onClose} disabled={saving}>취소</button>
+        <button className="ci-act navy" onClick={create} disabled={saving}>
+          <Icon name="check" size={13} /> {saving ? "저장 중…" : "개설하기"}
+        </button>
       </div>
     </div>
   );
