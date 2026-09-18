@@ -29,11 +29,23 @@ function saveAttempt(examId, patch) {
   if (window.__rjPushAttempt) { try { window.__rjPushAttempt(examId, s.attempts[examId]); } catch (e) {} }
   return s.attempts[examId];
 }
+// 로컬 캐시만 비운다(연습문제 "다시 풀기"). 원격 exam_attempts 행은 지우지 않는다 —
+//  1) attempts=0(무제한) 시험은 exam-submit 이 재제출 때 service_role로 그냥 덮어쓰므로 삭제가 필요 없고,
+//  2) 학생 계정에 exam_attempts 직접 DELETE 권한을 주지 않는 방향으로 RLS를 강화할 예정이라
+//     여기서 클라이언트가 직접 delete 를 시도하면 앞으로 실패하게 된다.
 function resetAttempt(examId) {
   const s = loadExamStore();
   delete s.attempts[examId];
   saveExamStore(s);
-  if (window.__rjDeleteAttempt) { try { window.__rjDeleteAttempt(examId); } catch (e) {} }
+}
+// 서버(exam-submit)가 이미 채점·저장을 끝낸 결과를 로컬 캐시에 반영만 한다.
+// saveAttempt()와 달리 원격 push 를 다시 트리거하지 않는다(중복 저장 방지 · 학생은
+// 더 이상 exam_attempts 에 직접 쓰기 권한이 없어질 예정이므로 애초에 쓸 필요 없음).
+function applyAttemptFromServer(examId, patch) {
+  const s = loadExamStore();
+  s.attempts[examId] = { ...(s.attempts[examId] || {}), ...patch };
+  saveExamStore(s);
+  return s.attempts[examId];
 }
 
 // 객관식·OX·단답 자동채점 → { autoScore, autoMax, per:{qid:{earned,correct,manual}}, needsManual }
@@ -61,11 +73,16 @@ function autoGrade(exam, answers) {
 function norm(s) { return String(s || "").trim().toLowerCase().replace(/\s+/g, "").replace(/[.,]/g, ""); }
 
 function examTotal(exam) {
+  // exam-serve 가 내려준 학생용 목록 객체는 문항 배열 대신 이미 계산된 totalPoints 를 가짐
+  if (exam.totalPoints != null) return exam.totalPoints;
   if (exam.format === "pdf_omr" || exam.omr) return (exam.omr || []).reduce((s, q) => s + (Number(q.points) || 0), 0);
   return exam.questions.reduce((s, q) => s + q.points, 0);
 }
 // 문항 수(구조형/OMR 공통)
-function examQCount(exam) { return ((exam.omr || exam.questions) || []).length; }
+function examQCount(exam) {
+  if (exam.qCount != null) return exam.qCount;
+  return ((exam.omr || exam.questions) || []).length;
+}
 
 // PDF+OMR 자동채점 (답안은 번호(no)로 키) → 서술형 없음 = 전체 자동
 function autoGradeOmr(exam, answers) {
@@ -307,8 +324,12 @@ function getExams() {
 function findExam(id) { return getExams().find((e) => e.id === id) || null; }
 
 // 최종 점수(자동+수동) 계산
+//  · 서버(exam-serve list / exam-submit)가 이미 계산한 attempt.score 가 있으면 그대로 신뢰
+//    (학생용 목록 객체엔 answers/manualScores 원본이 없으므로 이 값이 유일한 근거).
+//  · 강사/관리자가 보는 전체 attempt 객체(answers, manualScores 포함)는 기존 방식대로 재계산.
 function finalScore(exam, attempt) {
   if (!attempt) return null;
+  if (attempt.score != null) return attempt.score;
   let earned = attempt.autoScore || 0;
   const ms = attempt.manualScores || {};
   for (const qid in ms) earned += Number(ms[qid]) || 0;
