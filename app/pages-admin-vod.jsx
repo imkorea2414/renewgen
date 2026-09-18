@@ -55,31 +55,52 @@ function vodDurationLabel(sec) {
 }
 
 // 비메오 계정에서 쇼케이스/영상 목록을 불러와 골라 담는 패널
+const VIMEO_PICKER_PER_PAGE = 30;
 function VimeoPicker({ onPick, onClose }) {
   const [tab, setTab] = useStV("showcases"); // showcases | videos
+  const [q, setQ] = useStV("");
   const [items, setItems] = useStV([]);
+  const [page, setPage] = useStV(1);
+  const [total, setTotal] = useStV(0);
   const [loading, setLoading] = useStV(true);
+  const [loadingMore, setLoadingMore] = useStV(false);
   const [err, setErr] = useStV("");
 
-  const load = React.useCallback((t) => {
-    setLoading(true); setErr("");
-    vimeoListCall("?type=" + t + "&per_page=50").then((r) => {
-      setLoading(false);
-      if (!r.ok) { setErr(r.msg || "불러오기 실패"); setItems([]); return; }
-      setItems(r.items || []);
+  const load = React.useCallback((t, query, p, append) => {
+    if (append) setLoadingMore(true); else { setLoading(true); setItems([]); }
+    setErr("");
+    const qs = "?type=" + t + "&per_page=" + VIMEO_PICKER_PER_PAGE + "&page=" + p
+      + (query ? "&q=" + encodeURIComponent(query) : "");
+    vimeoListCall(qs).then((r) => {
+      setLoading(false); setLoadingMore(false);
+      if (!r.ok) { setErr(r.msg || "불러오기 실패"); if (!append) setItems([]); return; }
+      setTotal(Number(r.total) || 0);
+      setItems((prev) => append ? [...prev, ...(r.items || [])] : (r.items || []));
     });
   }, []);
-  React.useEffect(() => { load(tab); }, [tab, load]);
+
+  // 탭 전환은 즉시, 검색어 입력은 살짝 지연(debounce) 후 1페이지부터 다시 조회 —
+  // Vimeo API 서버 검색(query 파라미터)을 그대로 사용한다.
+  React.useEffect(() => {
+    setPage(1);
+    const t = setTimeout(() => load(tab, q, 1, false), q ? 400 : 0);
+    return () => clearTimeout(t);
+  }, [tab, q, load]);
+
+  const hasMore = !loading && !err && items.length < total;
+  const loadMore = () => { const next = page + 1; setPage(next); load(tab, q, next, true); };
 
   return (
     <div className="ci-card ci-card-pad" style={{ marginBottom: 14, background: "#fafafa" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", gap: 6 }}>
           <button type="button" onClick={() => setTab("showcases")}
             className={"ci-act" + (tab === "showcases" ? " navy" : "")}>쇼케이스</button>
           <button type="button" onClick={() => setTab("videos")}
             className={"ci-act" + (tab === "videos" ? " navy" : "")}>단일 영상</button>
         </div>
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="제목으로 검색…"
+          style={{ ...inStyle, height: 32, width: 180 }} />
         <button type="button" className="ci-act" onClick={onClose}><Icon name="close" size={12} /> 닫기</button>
       </div>
       {loading && <div style={{ fontSize: 13, color: "var(--ci-muted)", padding: "12px 0" }}>Vimeo에서 불러오는 중…</div>}
@@ -88,21 +109,30 @@ function VimeoPicker({ onPick, onClose }) {
         <div style={{ fontSize: 13, color: "var(--ci-muted)", padding: "12px 0" }}>목록이 비어 있습니다.</div>
       )}
       {!loading && !err && items.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 360, overflowY: "auto" }}>
-          {items.map((it) => (
-            <button key={it.id} type="button" onClick={() => onPick(it)}
-              style={{ textAlign: "left", border: "1px solid var(--ci-line)", borderRadius: 8, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0 }}>
-              <div style={{ width: "100%", aspectRatio: "16/9", background: "#eee", backgroundImage: it.thumbnail ? `url(${it.thumbnail})` : "none", backgroundSize: "cover", backgroundPosition: "center" }} />
-              <div style={{ padding: 8 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.3, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.name}</div>
-                <div style={{ fontSize: 11, color: "var(--ci-muted)" }}>
-                  {tab === "showcases" ? (it.videoCount != null ? it.videoCount + "개 영상" : "쇼케이스") : vodDurationLabel(it.duration)}
-                  {it.privacy ? " · " + it.privacy : ""}
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, maxHeight: 360, overflowY: "auto" }}>
+            {items.map((it) => (
+              <button key={it.id} type="button" onClick={() => onPick(it)}
+                style={{ textAlign: "left", border: "1px solid var(--ci-line)", borderRadius: 8, overflow: "hidden", background: "#fff", cursor: "pointer", padding: 0 }}>
+                <div style={{ width: "100%", aspectRatio: "16/9", background: "#eee", backgroundImage: it.thumbnail ? `url(${it.thumbnail})` : "none", backgroundSize: "cover", backgroundPosition: "center" }} />
+                <div style={{ padding: 8 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, lineHeight: 1.3, marginBottom: 4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{it.name}</div>
+                  <div style={{ fontSize: 11, color: "var(--ci-muted)" }}>
+                    {tab === "showcases" ? (it.videoCount != null ? it.videoCount + "개 영상" : "쇼케이스") : vodDurationLabel(it.duration)}
+                    {it.privacy ? " · " + it.privacy : ""}
+                  </div>
                 </div>
-              </div>
-            </button>
-          ))}
-        </div>
+              </button>
+            ))}
+          </div>
+          {hasMore && (
+            <div style={{ textAlign: "center", marginTop: 10 }}>
+              <button type="button" className="ci-act" disabled={loadingMore} onClick={loadMore}>
+                {loadingMore ? "불러오는 중…" : "더 불러오기 (" + items.length + " / " + total + ")"}
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
