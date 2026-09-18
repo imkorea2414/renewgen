@@ -152,22 +152,39 @@ function VimeoPicker({ onPick, onClose, mode }) {
 function emptyLesson() { return { title: "", vimeo_id: "", vimeo_hash: "", duration_sec: 0, _vimeoName: "" }; }
 
 // Showcase 안의 영상을 전체 페이지 끝까지 조회 — 기존 vimeo-list(type=showcase-videos)를 그대로 재사용.
-// "더 불러오기"를 반복 클릭하지 않아도 되도록, total 을 기준으로 자동으로 다음 page 를 계속 호출한다.
-// 무한루프 방지용 안전 상한만 둔다(쇼케이스 하나당 최대 2000개 영상까지 커버).
+// "더 불러오기"를 반복 클릭하지 않아도 되도록 자동으로 다음 page 를 계속 호출한다.
+//   · Vimeo 가 돌려주는 total 값을 종료 조건으로 쓰지 않는다 — total 이 실제 개수보다 작게(부정확하게)
+//     오면 "이미 total만큼 모았다"고 오판해 조기 종료되어 나머지 차시가 통째로 누락되는 문제가 있었다
+//     (실제 재현된 버그: total 이 6으로 왔을 때 40개 중 6개만 가져오고 멈춤). 대신 표준 REST 페이지네이션
+//     관례대로 "이번 페이지가 요청한 per_page 보다 적게 왔는지"만으로 마지막 페이지를 판정한다.
+//     total 은 화면에 참고 표시하는 용도로만 반환한다(진행 종료 판단에는 전혀 사용하지 않음).
+//   · 페이지를 합칠 때 video ID 기준으로 중복 제거한다(경계에서 같은 영상이 중복 반환되는 경우 대비).
+//   · 무한루프 방지용 안전 상한만 둔다(쇼케이스 하나당 최대 2000개 영상까지 커버).
 async function fetchAllShowcaseVideos(showcaseId) {
   const perPage = 100;
   const maxPages = 20;
-  let page = 1, all = [], total = Infinity;
-  while (page <= maxPages && all.length < total) {
+  let page = 1, total = 0;
+  const seen = new Set();
+  const all = [];
+  while (page <= maxPages) {
     const qs = "?type=showcase-videos&showcase_id=" + encodeURIComponent(showcaseId) + "&per_page=" + perPage + "&page=" + page;
     const r = await vimeoListCall(qs);
     if (!r.ok) return { ok: false, msg: r.msg || "불러오기 실패" };
-    total = Number(r.total) || 0;
-    if (!r.items || r.items.length === 0) break; // 빈 페이지가 오면 total 값과 무관하게 중단(안전장치)
-    all = all.concat(r.items);
+    total = Number(r.total) || total; // 이전에 받은 정상값을 0으로 덮어쓰지 않음 — 표시용으로만 사용
+    const pageItems = r.items || [];
+    if (pageItems.length === 0) break; // 빈 페이지 → 더 이상 결과 없음
+
+    let addedThisPage = 0;
+    for (const it of pageItems) {
+      const vid = String(it.id || "");
+      if (vid && !seen.has(vid)) { seen.add(vid); all.push(it); addedThisPage++; }
+    }
+
+    const isLastPage = pageItems.length < perPage; // 요청한 만큼 안 왔으면 마지막 페이지로 판단(total 은 보지 않음)
+    if (isLastPage || addedThisPage === 0) break; // addedThisPage===0: 같은 페이지 반복 응답 등 무한루프 방지
     page += 1;
   }
-  return { ok: true, items: all, total };
+  return { ok: true, items: all, total: total || all.length };
 }
 
 // 영상 제목의 "N강" 패턴에서 차시 번호를 추출 — 업로드 순서/날짜는 절대 사용하지 않는다.
@@ -314,9 +331,16 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
           <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "0 0 10px", lineHeight: 1.5 }}>
             번호가 고유하게 인식된 {fillable.length}개만 아래 "채우기"에 포함됩니다 · 중복/미분류 영상은 필요하면 개별 "Vimeo에서 선택"으로 직접 추가해주세요.
           </p>
+          {!allMatched && (
+            <p style={{ fontSize: 12, color: "var(--ci-bad)", margin: "0 0 10px", fontWeight: 700, lineHeight: 1.5 }}>
+              ⚠ 예상 차시 1~{expectedTotal || "N"}강이 전부 정확히 하나씩 확인되어야 채우기를 진행할 수 있습니다.
+              누락·중복·미분류를 먼저 해결하거나(또는 Showcase를 다시 조회) "예상 차시"를 실제 영상 수에 맞게 수정해주세요.
+              불완전한 목록을 그대로 채우면 차시 번호가 실제 강의 번호와 어긋날 수 있어 막아두었습니다.
+            </p>
+          )}
 
           {!confirmMode ? (
-            <button type="button" className="ci-act navy" disabled={fillable.length === 0}
+            <button type="button" className="ci-act navy" disabled={!allMatched}
               onClick={() => (hasExistingContent ? setConfirmMode(true) : doFill("replace"))}>
               <Icon name="check" size={12} /> 이 목록을 차시에 채우기 ({fillable.length}개)
             </button>
