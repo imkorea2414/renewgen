@@ -101,11 +101,92 @@ async function listAttempts(examId) {
   } catch (e) { return []; }
 }
 
-// exam-data 훅 연결
+// exam-data 훅 연결 — 강사/관리자(ExamGrader 등)의 직접 저장에만 쓰임.
+// 학생 제출은 더 이상 이 경로를 타지 않는다(아래 examSubmitCall 참고).
 window.__rjPushAttempt = pushAttempt;
 window.__rjDeleteAttempt = deleteAttempt;
 
 Object.assign(window, {
   pullExams, pullAttempts, pullExamData, pushExam, deleteRemoteExam,
   pushExamAttempt: pushAttempt, listAttempts, examSbStatus,
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  학생용 — exam-serve / exam-submit Edge Function 경유
+//   · 정답(answer)/해설(explanation)이 포함된 exams 원본을 학생 브라우저가
+//     직접 select 하지 않는다 — 목록/응시/채점 모두 서버(Edge Function)를 거친다.
+//   · classin-roster / bbb-room 과 동일한 인증 방식(JWT Bearer + apikey).
+// ══════════════════════════════════════════════════════════════════
+async function examServeCall(qs) {
+  const base = (window.SUPABASE_URL || "") + "/functions/v1/exam-serve";
+  let bearer = window.SUPABASE_ANON_KEY || "";
+  try {
+    const sb = window.getSupabase && window.getSupabase();
+    const { data: { session } } = await sb.auth.getSession();
+    if (session && session.access_token) bearer = session.access_token;
+  } catch (e) {}
+  try {
+    const res = await fetch(base + qs, { headers: { Authorization: "Bearer " + bearer, apikey: window.SUPABASE_ANON_KEY || "" } });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || j.ok === false) return { ok: false, msg: j.msg || ("HTTP " + res.status) };
+    return j;
+  } catch (e) { return { ok: false, msg: "네트워크 오류: " + String(e) }; }
+}
+
+async function examSubmitCall(body) {
+  const base = (window.SUPABASE_URL || "") + "/functions/v1/exam-submit";
+  let bearer = window.SUPABASE_ANON_KEY || "";
+  try {
+    const sb = window.getSupabase && window.getSupabase();
+    const { data: { session } } = await sb.auth.getSession();
+    if (session && session.access_token) bearer = session.access_token;
+  } catch (e) {}
+  try {
+    const res = await fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + bearer, apikey: window.SUPABASE_ANON_KEY || "" },
+      body: JSON.stringify(body || {}),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok || j.ok === false) return { ok: false, msg: j.msg || ("HTTP " + res.status) };
+    return j;
+  } catch (e) { return { ok: false, msg: "네트워크 오류: " + String(e) }; }
+}
+
+// 학생 시험 목록(메타데이터만, 정답 없음) — 로그인 시 pullExamData 대신 이걸 호출
+async function pullExamsForStudent() {
+  const r = await examServeCall("?action=list");
+  if (!r.ok) { _examSbState = "local"; return false; }
+  _examSbState = "connected";
+  const store = window.loadExamStore();
+  store.custom = r.items || [];
+  // 서버가 알려준 내 응시 요약(score/graded/submittedAt)을 로컬 attempts 캐시에 반영
+  for (const it of r.items || []) {
+    if (it.myAttempt) store.attempts[it.id] = { ...(store.attempts[it.id] || {}), ...it.myAttempt };
+  }
+  window.saveExamStore(store);
+  return true;
+}
+
+// 응시 화면용 — 정답 없는 단일 시험(문항 포함) 조회
+async function fetchExamForTaking(examId) {
+  return examServeCall("?action=take&exam_id=" + encodeURIComponent(examId));
+}
+
+// 결과 화면용(제출 직후~마감 전) — 점수/맞고틀림만, 정답·해설 없음
+async function fetchExamResult(examId) {
+  return examServeCall("?action=result&exam_id=" + encodeURIComponent(examId));
+}
+// 결과 화면용(마감 후) — 정답/해설 포함 재조회(그 시점에만 서버가 내려줌)
+async function fetchExamReview(examId) {
+  return examServeCall("?action=review&exam_id=" + encodeURIComponent(examId));
+}
+
+// 제출 — 서버가 채점·저장까지 전부 수행. score/graded 는 서버 응답만 신뢰.
+async function submitExamAnswers(examId, answers, leaveCount) {
+  return examSubmitCall({ exam_id: examId, answers, leaveCount });
+}
+
+Object.assign(window, {
+  pullExamsForStudent, fetchExamForTaking, fetchExamResult, fetchExamReview, submitExamAnswers,
 });

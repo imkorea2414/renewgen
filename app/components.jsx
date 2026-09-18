@@ -143,10 +143,19 @@ function AppProvider({ children, initialTweaks }) {
     return () => { try { sub.subscription.unsubscribe(); } catch (e) {} };
   }, []);
 
-  // 현재 로그인 사용자를 전역에 노출 + 시험 데이터 Supabase 동기화(있을 때)
+  // 현재 로그인 사용자를 전역에 노출 + 시험 데이터 동기화
+  //  · staff(teacher/admin)만 exams 원본(정답 포함)을 직접 pullExamData() 한다.
+  //  · 학생은 exam-serve Edge Function이 정답을 제거한 메타데이터만 주는
+  //    pullExamsForStudent() 를 쓴다 — 로그인 즉시 정답이 통째로 내려오던
+  //    예전 경로(pullExamData)를 학생에게는 더 이상 타지 않게 한다.
   useEffect(() => {
     window.RJ_CURRENT_USER = user || null;
-    if (user && window.pullExamData) { window.pullExamData(user).catch(() => {}); }
+    if (!user) return;
+    if (window.isStaff && window.isStaff(user)) {
+      if (window.pullExamData) window.pullExamData(user).catch(() => {});
+    } else if (window.pullExamsForStudent) {
+      window.pullExamsForStudent(user).catch(() => {});
+    }
   }, [user]);
 
   // 로그인 사용자의 profiles.role 을 한 번 불러와 user 에 병합 (역할 기반 권한의 실서버 소스)

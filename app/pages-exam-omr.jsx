@@ -15,15 +15,29 @@ function omrPdfSrc(url) {
 }
 
 // ── 응시 화면 ───────────────────────────────────────────────────────
+//  구조형과 마찬가지로 exam-serve?action=take 로 정답 없는 OMR 문항만 받아온다.
 function OmrRunner({ examId, onDone, onExit }) {
-  const exam = window.findExam(examId);
   const { showToast } = useApp();
-  const items = exam.omr || [];
+  const [exam, setExam] = useStOmr(null);
+  const [loadErr, setLoadErr] = useStOmr("");
   const [answers, setAnswers] = useStOmr({});
-  const [left, setLeft] = useStOmr(exam.durationMin ? exam.durationMin * 60 : null);
+  const [left, setLeft] = useStOmr(null);
   const [leaveCount, setLeaveCount] = useStOmr(0);
   const [confirming, setConfirming] = useStOmr(false);
+  const [submitting, setSubmitting] = useStOmr(false);
   const submittedRef = useRfOmr(false);
+
+  useEfOmr(() => {
+    let alive = true;
+    setExam(null); setLoadErr(""); setAnswers({}); submittedRef.current = false;
+    window.fetchExamForTaking(examId).then((r) => {
+      if (!alive) return;
+      if (!r.ok) { setLoadErr(r.msg || "시험을 불러오지 못했습니다"); return; }
+      setExam(r.exam);
+      setLeft(r.exam.durationMin ? r.exam.durationMin * 60 : null);
+    });
+    return () => { alive = false; };
+  }, [examId]);
 
   useEfOmr(() => {
     if (left == null) return;
@@ -38,17 +52,29 @@ function OmrRunner({ examId, onDone, onExit }) {
     return () => document.removeEventListener("visibilitychange", onHide);
   }, []);
 
+  if (loadErr) {
+    return (
+      <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>
+        {loadErr}<button className="ci-act" style={{ marginLeft: 8 }} onClick={onExit}>목록으로</button>
+      </div>
+    );
+  }
+  if (!exam) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>불러오는 중…</div>;
+
+  const items = exam.omr || [];
   const setA = (no, v) => setAnswers((a) => ({ ...a, [no]: v }));
   const answeredN = items.filter((it) => answers[it.no] != null && answers[it.no] !== "").length;
 
-  function doSubmit() {
+  async function doSubmit() {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    const g = window.autoGradeOmr(exam, answers);
-    window.saveAttempt(examId, {
-      answers, submittedAt: new Date().toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" }),
-      autoScore: g.autoScore, autoMax: g.autoMax, manualScores: {}, manualFeedback: {},
-      graded: true, leaveCount, omr: true,
+    setSubmitting(true);
+    const r = await window.submitExamAnswers(examId, answers, leaveCount);
+    setSubmitting(false);
+    if (!r.ok) { showToast && showToast(r.msg || "제출에 실패했습니다"); submittedRef.current = false; return; }
+    window.applyAttemptFromServer(examId, {
+      answers, submittedAt: r.submittedAt, autoScore: r.autoScore, autoMax: r.autoMax,
+      needsManual: r.needsManual, graded: r.graded, score: r.score, per: r.per, leaveCount, omr: true,
     });
     onDone();
   }
@@ -140,8 +166,10 @@ function OmrRunner({ examId, onDone, onExit }) {
               제출 후에는 수정할 수 없습니다.
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="ci-act" onClick={() => setConfirming(false)}>계속 풀기</button>
-              <button className="ci-act navy" onClick={doSubmit}><Icon name="check" size={13} /> 제출</button>
+              <button className="ci-act" onClick={() => setConfirming(false)} disabled={submitting}>계속 풀기</button>
+              <button className="ci-act navy" onClick={doSubmit} disabled={submitting} style={{ opacity: submitting ? 0.6 : 1 }}>
+                <Icon name="check" size={13} /> {submitting ? "제출 중…" : "제출"}
+              </button>
             </div>
           </div>
         </div>
@@ -151,33 +179,76 @@ function OmrRunner({ examId, onDone, onExit }) {
 }
 
 // ── 결과 화면 ───────────────────────────────────────────────────────
+//  제출 직후: exam-serve?action=result 로 점수/맞고틀림만(정답 없이) 받는다.
+//  dueAt 경과 후 "정답 보기"를 누르면 그 순간 action=review 를 다시 호출한다.
 function OmrResult({ examId, onBack }) {
-  const exam = window.findExam(examId);
-  const at = window.getAttempt(examId);
-  if (!at) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>응시 기록이 없습니다. <button className="ci-act" style={{ marginLeft: 8 }} onClick={onBack}>목록으로</button></div>;
+  const { showToast } = useApp();
+  const [data, setData] = useStOmr(null);   // { exam, attempt, reviewAvailable }
+  const [err, setErr] = useStOmr("");
+  const [reveal, setReveal] = useStOmr(null);
+  const [revealing, setRevealing] = useStOmr(false);
 
+  useEfOmr(() => {
+    let alive = true;
+    window.fetchExamResult(examId).then((r) => {
+      if (!alive) return;
+      if (!r.ok) { setErr(r.msg || "결과를 불러오지 못했습니다"); return; }
+      setData(r);
+    });
+    return () => { alive = false; };
+  }, [examId]);
+
+  if (err) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>{err} <button className="ci-act" style={{ marginLeft: 8 }} onClick={onBack}>목록으로</button></div>;
+  if (!data) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>불러오는 중…</div>;
+
+  const { exam, attempt, reviewAvailable } = data;
   const items = exam.omr || [];
-  const total = window.examTotal(exam);
-  const g = window.autoGradeOmr(exam, at.answers);
-  const score = g.autoScore;
-  const pct = Math.round((score / total) * 100);
+  const revealById = {};
+  if (reveal) for (const it of (reveal.exam.omr || [])) revealById[it.no] = it;
+
+  const total = exam.totalPoints;
+  const per = attempt.per || {};
+  const score = attempt.score != null ? attempt.score : attempt.autoScore; // OMR 은 essay 가 없어 항상 즉시 확정
+  const pct = total ? Math.round((score / total) * 100) : 0;
   const grade = window.gradeOf(pct);
   const pctile = window.mockPercentile(pct);
 
   const byUnit = {};
   for (const it of items) {
     const u = it.unit || "기타";
+    const p = per[it.no] || {};
     if (!byUnit[u]) byUnit[u] = { earned: 0, max: 0 };
-    byUnit[u].max += it.points; byUnit[u].earned += g.per[it.no].earned;
+    byUnit[u].max += it.points; byUnit[u].earned += p.earned || 0;
   }
-  const wrong = items.filter((it) => g.per[it.no].correct === false);
-  const correctN = items.filter((it) => g.per[it.no].correct).length;
+  const wrong = items.filter((it) => per[it.no] && per[it.no].correct === false);
+  const correctN = items.filter((it) => per[it.no] && per[it.no].correct).length;
+
+  const doReveal = async () => {
+    setRevealing(true);
+    const r = await window.fetchExamReview(examId);
+    setRevealing(false);
+    if (!r.ok) { showToast && showToast(r.msg || "아직 정답을 볼 수 없습니다"); return; }
+    setReveal(r);
+  };
 
   return (
     <div>
       <CiHead title={exam.title + " · 결과"} api="OMR Scored"
-        sub={"제출 " + at.submittedAt + (at.leaveCount ? " · 화면 이탈 " + at.leaveCount + "회" : "")}
+        sub={"제출 " + new Date(attempt.submittedAt).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" }) + (attempt.leaveCount ? " · 화면 이탈 " + attempt.leaveCount + "회" : "")}
         action={<button className="ci-act" onClick={onBack}><Icon name="arrowLeft" size={13} /> 시험 목록</button>} />
+
+      {!reveal && (
+        <div className="ci-card ci-card-pad" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13.5, color: "var(--ci-muted)" }}>
+            {reviewAvailable ? "정답과 해설을 확인할 수 있습니다." : "시험 마감 전에는 정답·해설이 공개되지 않습니다(다른 학생 보호를 위함)."}
+          </div>
+          {reviewAvailable && (
+            <button className="ci-act navy" onClick={doReveal} disabled={revealing}>
+              <Icon name="check" size={13} /> {revealing ? "불러오는 중…" : "정답·해설 보기"}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 점수 요약 */}
       <div className="ci-card ci-card-pad" style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 28, alignItems: "center", marginBottom: 16 }}>
@@ -197,7 +268,7 @@ function OmrResult({ examId, onBack }) {
         <div style={{ fontWeight: 900, fontSize: 15, marginBottom: 14 }}>단원별 성취도</div>
         <div style={{ display: "grid", gap: 12 }}>
           {Object.entries(byUnit).map(([u, d]) => {
-            const p = Math.round((d.earned / d.max) * 100);
+            const p = d.max ? Math.round((d.earned / d.max) * 100) : 0;
             return (
               <div key={u}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
@@ -228,17 +299,19 @@ function OmrResult({ examId, onBack }) {
             <thead><tr><th>번호</th><th>유형</th><th style={{ textAlign: "center" }}>내 답</th><th style={{ textAlign: "center" }}>정답</th><th style={{ textAlign: "center" }}>채점</th><th>해설</th></tr></thead>
             <tbody>
               {items.map((it) => {
-                const my = at.answers[it.no];
-                const correct = g.per[it.no].correct;
+                const my = attempt.answers[it.no];
+                const p = per[it.no] || {};
+                const correct = p.correct;
+                const rv = revealById[it.no];
                 const fmt = (v) => it.type === "short" ? (v == null || v === "" ? "—" : v) : (v == null ? "—" : OMR_BUBBLES[Number(v)]);
                 return (
                   <tr key={it.no} style={{ background: correct ? "transparent" : "rgba(200,40,40,0.05)" }}>
                     <td style={{ fontWeight: 800 }}>{it.no}</td>
                     <td><span className="ci-badge neutral" style={{ fontSize: 10 }}>{it.type === "short" ? "단답" : (it.choices || 5) + "지선다"}</span></td>
                     <td style={{ textAlign: "center", fontWeight: 700, color: correct ? "var(--ci-ok)" : "var(--ci-bad)" }}>{fmt(my)}</td>
-                    <td style={{ textAlign: "center", fontWeight: 700, color: "var(--ci-ok)" }}>{fmt(it.answer)}</td>
+                    <td style={{ textAlign: "center", fontWeight: 700, color: "var(--ci-ok)" }}>{rv ? fmt(rv.answer) : "—"}</td>
                     <td style={{ textAlign: "center" }}>{correct ? <span className="ci-badge ok" style={{ fontSize: 10 }}>정답 {it.points}</span> : <span className="ci-badge bad" style={{ fontSize: 10 }}>오답 0</span>}</td>
-                    <td style={{ fontSize: 12.5, color: "var(--ci-muted)" }}>{it.explanation || "—"}</td>
+                    <td style={{ fontSize: 12.5, color: "var(--ci-muted)" }}>{rv ? (rv.explanation || "—") : "—"}</td>
                   </tr>
                 );
               })}

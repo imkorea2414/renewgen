@@ -21,12 +21,14 @@ function shuffled(arr) {
 }
 
 // ── 학생 시험 패널(목록/라우팅) ─────────────────────────────────────
+//  주의: 여기서는 exam-serve(Edge Function)가 정답을 제거한 메타데이터만 받아온다.
+//  예전처럼 exams 테이블 원본을 통째로 pullExamData() 하지 않는다.
 function ExamPanel() {
   const [view, setView] = useStEx({ mode: "list" });
   const { user } = useApp();
   const [, setSynced] = useStEx(0);
   useEfEx(() => {
-    if (user && window.pullExamData) window.pullExamData(user).then(() => setSynced((s) => s + 1)).catch(() => {});
+    if (user && window.pullExamsForStudent) window.pullExamsForStudent(user).then(() => setSynced((s) => s + 1)).catch(() => {});
   }, [user]);
   if (view.mode === "take") {
     const ex = window.findExam(view.examId);
@@ -125,11 +127,35 @@ function ExamList({ onTake, onResult }) {
 }
 
 // ── 응시 화면 ───────────────────────────────────────────────────────
+//  문항(정답 없음)은 exam-serve?action=take 로 매번 새로 받아온다 — 로컬 캐시의
+//  exams 원본을 쓰지 않는다. 채점/저장은 exam-submit 서버가 전담한다.
 function ExamRunner({ examId, onDone, onExit }) {
-  const exam = window.findExam(examId);
   const { showToast } = useApp();
+  const [exam, setExam] = useStEx(null);
+  const [loadErr, setLoadErr] = useStEx("");
+  const [answers, setAnswers] = useStEx({});
+  const [cur, setCur] = useStEx(0);
+  const [left, setLeft] = useStEx(null);
+  const [leaveCount, setLeaveCount] = useStEx(0);
+  const [confirming, setConfirming] = useStEx(false);
+  const [submitting, setSubmitting] = useStEx(false);
+  const submittedRef = useRfEx(false);
+
+  useEfEx(() => {
+    let alive = true;
+    setExam(null); setLoadErr(""); setAnswers({}); setCur(0); submittedRef.current = false;
+    window.fetchExamForTaking(examId).then((r) => {
+      if (!alive) return;
+      if (!r.ok) { setLoadErr(r.msg || "시험을 불러오지 못했습니다"); return; }
+      setExam(r.exam);
+      setLeft(r.exam.durationMin ? r.exam.durationMin * 60 : null);
+    });
+    return () => { alive = false; };
+  }, [examId]);
+
   // 셔플된 문항/보기 순서를 응시 동안 고정
   const layout = useMemoEx(() => {
+    if (!exam || !exam.questions) return [];
     const qs = exam.shuffle ? shuffled(exam.questions) : exam.questions.slice();
     return qs.map((q) => {
       if (q.type === "mc" && exam.shuffle) {
@@ -138,14 +164,7 @@ function ExamRunner({ examId, onDone, onExit }) {
       }
       return { q, choiceOrder: q.choices ? q.choices.map((_, i) => i) : null };
     });
-  }, [examId]);
-
-  const [answers, setAnswers] = useStEx({});
-  const [cur, setCur] = useStEx(0);
-  const [left, setLeft] = useStEx(exam.durationMin ? exam.durationMin * 60 : null);
-  const [leaveCount, setLeaveCount] = useStEx(0);
-  const [confirming, setConfirming] = useStEx(false);
-  const submittedRef = useRfEx(false);
+  }, [exam]);
 
   // 타이머
   useEfEx(() => {
@@ -162,17 +181,33 @@ function ExamRunner({ examId, onDone, onExit }) {
     return () => document.removeEventListener("visibilitychange", onHide);
   }, []);
 
+  if (loadErr) {
+    return (
+      <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>
+        {loadErr}<button className="ci-act" style={{ marginLeft: 8 }} onClick={onExit}>목록으로</button>
+      </div>
+    );
+  }
+  if (!exam) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>불러오는 중…</div>;
+
   const setA = (qid, v) => setAnswers((a) => ({ ...a, [qid]: v }));
   const answeredN = layout.filter(({ q }) => answers[q.id] != null && answers[q.id] !== "").length;
 
-  function doSubmit() {
+  async function doSubmit() {
     if (submittedRef.current) return;
     submittedRef.current = true;
-    const g = window.autoGrade(exam, answers);
-    window.saveAttempt(examId, {
-      answers, submittedAt: new Date().toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" }),
-      autoScore: g.autoScore, autoMax: g.autoMax, manualScores: {}, manualFeedback: {},
-      graded: !g.needsManual, leaveCount,
+    setSubmitting(true);
+    const r = await window.submitExamAnswers(examId, answers, leaveCount);
+    setSubmitting(false);
+    if (!r.ok) {
+      showToast && showToast(r.msg || "제출에 실패했습니다");
+      submittedRef.current = false; // 재시도 허용(마감/중복 등은 아래 안내 후 사용자가 나가기 선택)
+      return;
+    }
+    // 서버(exam-submit)가 채점·저장을 끝낸 결과만 로컬에 반영 — 원격 재전송은 하지 않음
+    window.applyAttemptFromServer(examId, {
+      answers, submittedAt: r.submittedAt, autoScore: r.autoScore, autoMax: r.autoMax,
+      needsManual: r.needsManual, graded: r.graded, score: r.score, per: r.per, leaveCount,
     });
     onDone();
   }
@@ -280,8 +315,10 @@ function ExamRunner({ examId, onDone, onExit }) {
               제출 후에는 {exam.type === "practice" ? "다시 풀 수 있어요." : "수정할 수 없습니다."}
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button className="ci-act" onClick={() => setConfirming(false)}>계속 풀기</button>
-              <button className="ci-act navy" onClick={doSubmit}><Icon name="check" size={13} /> 제출</button>
+              <button className="ci-act" onClick={() => setConfirming(false)} disabled={submitting}>계속 풀기</button>
+              <button className="ci-act navy" onClick={doSubmit} disabled={submitting} style={{ opacity: submitting ? 0.6 : 1 }}>
+                <Icon name="check" size={13} /> {submitting ? "제출 중…" : "제출"}
+              </button>
             </div>
           </div>
         </div>
@@ -300,54 +337,103 @@ function optKey(on) {
 }
 
 // ── 결과 화면 ───────────────────────────────────────────────────────
+//  제출 직후: exam-serve?action=result 로 점수/맞고틀림만 받는다(정답·해설 없음).
+//  dueAt 경과(또는 reviewAvailable) 후 학생이 "정답 보기"를 누르면 그 순간
+//  exam-serve?action=review 를 다시 호출해 정답/해설을 받아온다 — 브라우저에
+//  미리 숨겨뒀던 값을 꺼내 보여주는 방식이 아니라 매번 서버에 새로 묻는다.
 function ExamResult({ examId, onBack, onRetake }) {
-  const exam = window.findExam(examId);
-  const at = window.getAttempt(examId);
-  if (!at) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>응시 기록이 없습니다. <button className="ci-act" style={{ marginLeft: 8 }} onClick={onBack}>목록으로</button></div>;
+  const { showToast } = useApp();
+  const [data, setData] = useStEx(null);   // { exam, attempt, reviewAvailable }
+  const [err, setErr] = useStEx("");
+  const [reveal, setReveal] = useStEx(null); // action=review 응답(answer/explanation 포함) — 요청 시에만 채워짐
+  const [revealing, setRevealing] = useStEx(false);
 
-  const total = window.examTotal(exam);
-  const g = window.autoGrade(exam, at.answers);
-  const ms = at.manualScores || {};
-  const mf = at.manualFeedback || {};
-  const score = window.finalScore(exam, at);
-  const pct = Math.round((score / total) * 100);
+  useEfEx(() => {
+    let alive = true;
+    window.fetchExamResult(examId).then((r) => {
+      if (!alive) return;
+      if (!r.ok) { setErr(r.msg || "결과를 불러오지 못했습니다"); return; }
+      setData(r);
+    });
+    return () => { alive = false; };
+  }, [examId]);
+
+  if (err) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>{err} <button className="ci-act" style={{ marginLeft: 8 }} onClick={onBack}>목록으로</button></div>;
+  if (!data) return <div className="ci-card ci-card-pad" style={{ textAlign: "center", padding: 48, color: "var(--ci-muted)" }}>불러오는 중…</div>;
+
+  // 참고: PDF+OMR 형식은 OmrResult(별도 컴포넌트, pages-exam-omr.jsx)가 담당하므로
+  // 여기 도달하는 exam 은 항상 구조형(mc/ox/short/essay) 문항이다.
+  const { exam, attempt, reviewAvailable } = data;
+  const items = exam.questions || [];
+  const revealItems = reveal ? (reveal.exam.questions || []) : null;
+  const revealById = {};
+  if (revealItems) for (const it of revealItems) revealById[it.id] = it;
+
+  const total = exam.totalPoints;
+  const per = attempt.per || {};
+  const ms = attempt.manualScores || {};
+  const mf = attempt.manualFeedback || {};
+  const pending = !attempt.graded;
+  // 확정 점수(graded)면 그대로, 아니면 자동채점 부분점수를 잠정 표시(최종 점수인 것처럼 보이지 않게 아래서 안내)
+  const displayScore = pending ? attempt.autoScore : attempt.score;
+  const pct = total ? Math.round((displayScore / total) * 100) : 0;
   const grade = window.gradeOf(pct);
   const pctile = window.mockPercentile(pct);
-  const pending = !at.graded;
+  const correctCount = items.filter((it) => per[it.id] && per[it.id].correct).length;
+  const wrong = items.filter((it) => per[it.id] && per[it.id].correct === false);
 
-  // 단원별 분석
   const byUnit = {};
-  for (const q of exam.questions) {
-    const u = q.unit || "기타";
+  for (const it of items) {
+    const u = it.unit || "기타";
+    const p = per[it.id] || {};
     if (!byUnit[u]) byUnit[u] = { earned: 0, max: 0 };
-    byUnit[u].max += q.points;
-    byUnit[u].earned += (g.per[q.id] && !g.per[q.id].manual) ? g.per[q.id].earned : (Number(ms[q.id]) || 0);
+    byUnit[u].max += it.points;
+    byUnit[u].earned += p.manual ? (Number(ms[it.id]) || 0) : (p.earned || 0);
   }
-  const wrong = exam.questions.filter((q) => g.per[q.id] && g.per[q.id].correct === false);
+
+  const doReveal = async () => {
+    setRevealing(true);
+    const r = await window.fetchExamReview(examId);
+    setRevealing(false);
+    if (!r.ok) { showToast && showToast(r.msg || "아직 정답을 볼 수 없습니다"); return; }
+    setReveal(r);
+  };
 
   return (
     <div>
       <CiHead title={exam.title + " · 결과"} api="Renewjen Exam"
-        sub={"제출 " + at.submittedAt + (at.leaveCount ? " · 화면 이탈 " + at.leaveCount + "회" : "")}
+        sub={"제출 " + new Date(attempt.submittedAt).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" }) + (attempt.leaveCount ? " · 화면 이탈 " + attempt.leaveCount + "회" : "")}
         action={<button className="ci-act" onClick={onBack}><Icon name="arrowLeft" size={13} /> 시험 목록</button>} />
 
       {pending && (
         <div className="ci-card ci-card-pad" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", borderLeft: "4px solid var(--ci-navy)" }}>
           <Icon name="clock" size={18} />
-          <div style={{ fontSize: 13.5 }}><strong>서술형 채점 대기 중</strong> — 자동채점 부분 점수만 우선 표시됩니다. 강사 채점이 끝나면 최종 점수가 확정됩니다.</div>
+          <div style={{ fontSize: 13.5 }}><strong>서술형 채점 대기 중</strong> — 자동채점 부분 점수만 잠정 표시됩니다(최종 점수 아님). 강사 채점이 끝나면 최종 점수가 확정됩니다.</div>
+        </div>
+      )}
+      {!reveal && (
+        <div className="ci-card ci-card-pad" style={{ marginBottom: 16, display: "flex", gap: 12, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <div style={{ fontSize: 13.5, color: "var(--ci-muted)" }}>
+            {reviewAvailable ? "정답과 해설을 확인할 수 있습니다." : "시험 마감 전에는 정답·해설이 공개되지 않습니다(다른 학생 보호를 위함)."}
+          </div>
+          {reviewAvailable && (
+            <button className="ci-act navy" onClick={doReveal} disabled={revealing}>
+              <Icon name="check" size={13} /> {revealing ? "불러오는 중…" : "정답·해설 보기"}
+            </button>
+          )}
         </div>
       )}
 
       {/* 점수 요약 */}
       <div className="ci-card ci-card-pad" style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 28, alignItems: "center", marginBottom: 16 }}>
         <div style={{ textAlign: "center" }}>
-          <div className="ci-ring" style={{ "--p": pct, width: 120, height: 120 }}><span className="val" style={{ fontSize: 30 }}>{score}</span></div>
-          <div style={{ fontSize: 12, color: "var(--ci-muted)", marginTop: 8, fontWeight: 700 }}>/ {total}점 ({pct}%)</div>
+          <div className="ci-ring" style={{ "--p": pct, width: 120, height: 120 }}><span className="val" style={{ fontSize: 30 }}>{displayScore}</span></div>
+          <div style={{ fontSize: 12, color: "var(--ci-muted)", marginTop: 8, fontWeight: 700 }}>/ {total}점 ({pct}%){pending ? " · 잠정" : ""}</div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
           <ResCell k="예상 등급" v={grade + "등급"} />
           <ResCell k="상위" v={pctile + "%"} />
-          <ResCell k="정답 / 문항" v={exam.questions.filter((q) => g.per[q.id] && g.per[q.id].correct).length + " / " + exam.questions.length} />
+          <ResCell k="정답 / 문항" v={correctCount + " / " + items.length} />
         </div>
       </div>
 
@@ -356,7 +442,7 @@ function ExamResult({ examId, onBack, onRetake }) {
         <div style={{ fontWeight: 900, fontSize: 15, marginBottom: 14 }}>단원별 성취도</div>
         <div style={{ display: "grid", gap: 12 }}>
           {Object.entries(byUnit).map(([u, d]) => {
-            const p = Math.round((d.earned / d.max) * 100);
+            const p = d.max ? Math.round((d.earned / d.max) * 100) : 0;
             return (
               <div key={u}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 5 }}>
@@ -376,40 +462,42 @@ function ExamResult({ examId, onBack, onRetake }) {
       {wrong.length > 0 && (
         <div className="ci-card ci-card-pad" style={{ marginBottom: 16, borderLeft: "4px solid var(--ci-bad)" }}>
           <div style={{ fontWeight: 900, fontSize: 15, marginBottom: 4 }}>오답노트 <span style={{ color: "var(--ci-bad)" }}>{wrong.length}</span></div>
-          <div style={{ fontSize: 12.5, color: "var(--ci-muted)" }}>틀린 문항만 모았습니다 — 해설과 함께 복습하세요.</div>
+          <div style={{ fontSize: 12.5, color: "var(--ci-muted)" }}>틀린 문항만 모았습니다{reveal ? " — 해설과 함께 복습하세요." : " — 정답 공개 후 해설을 확인할 수 있어요."}</div>
         </div>
       )}
 
       {/* 문항별 리뷰 */}
       <div style={{ display: "grid", gap: 12 }}>
-        {exam.questions.map((q, i) => {
-          const per = g.per[q.id];
-          const yourRaw = at.answers[q.id];
-          const isEssay = q.type === "essay";
-          const correct = per && per.correct;
-          const earned = isEssay ? (Number(ms[q.id]) || (pending ? null : 0)) : per.earned;
+        {items.map((it, i) => {
+          const key = it.id;
+          const p = per[key] || {};
+          const yourRaw = attempt.answers[key];
+          const isEssay = it.type === "essay";
+          const correct = p.correct;
+          const earned = isEssay ? (Number(ms[key]) || (pending ? null : 0)) : p.earned;
+          const rv = revealById[key]; // action=review 로 받은, answer/explanation 포함 버전(요청 시에만 존재)
           return (
-            <div key={q.id} className="ci-card" style={{ padding: 18, borderLeft: "4px solid " + (isEssay ? "var(--ci-navy)" : correct ? "var(--ci-ok)" : "var(--ci-bad)") }}>
+            <div key={key} className="ci-card" style={{ padding: 18, borderLeft: "4px solid " + (isEssay ? "var(--ci-navy)" : correct ? "var(--ci-ok)" : "var(--ci-bad)") }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 800, fontSize: 14 }}>{i + 1}.</span>
-                <span className="ci-badge neutral" style={{ fontSize: 10.5 }}>{QTYPE_KO[q.type]}</span>
+                <span className="ci-badge neutral" style={{ fontSize: 10.5 }}>{QTYPE_KO[it.type] || it.type}</span>
                 {isEssay
-                  ? <span className="ci-badge navy" style={{ fontSize: 10.5 }}>{earned == null ? "채점 대기" : earned + "/" + q.points + "점"}</span>
-                  : <span className={"ci-badge " + (correct ? "ok" : "bad")} style={{ fontSize: 10.5 }}>{correct ? "정답" : "오답"} · {earned}/{q.points}점</span>}
-                {q.unit && <span style={{ fontSize: 12, color: "var(--ci-muted)" }}>{q.unit}</span>}
+                  ? <span className="ci-badge navy" style={{ fontSize: 10.5 }}>{earned == null ? "채점 대기" : earned + "/" + it.points + "점"}</span>
+                  : <span className={"ci-badge " + (correct ? "ok" : "bad")} style={{ fontSize: 10.5 }}>{correct ? "정답" : "오답"} · {earned}/{it.points}점</span>}
+                {it.unit && <span style={{ fontSize: 12, color: "var(--ci-muted)" }}>{it.unit}</span>}
               </div>
-              <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: 12 }}>{q.stem}</div>
+              {it.stem && <div style={{ fontSize: 15, fontWeight: 700, lineHeight: 1.6, whiteSpace: "pre-wrap", marginBottom: 12 }}>{it.stem}</div>}
 
-              {q.type === "mc" && (
+              {it.type === "mc" && (
                 <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
-                  {q.choices.map((c, ci) => {
-                    const isAns = ci === q.answer, isYour = yourRaw === ci;
+                  {(it.choices || []).map((c, ci) => {
+                    const isAns = rv && ci === rv.answer, isYour = yourRaw === ci;
                     return (
                       <div key={ci} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 12px", borderRadius: 8, fontSize: 14,
                         background: isAns ? "rgba(31,138,91,0.10)" : isYour ? "rgba(200,40,40,0.08)" : "transparent",
                         border: "1px solid " + (isAns ? "var(--ci-ok)" : isYour ? "var(--ci-bad)" : "var(--ci-line)") }}>
                         <span style={{ fontWeight: 800, color: "var(--ci-muted)" }}>{String.fromCharCode(9312 + ci)}</span>
-                        <span style={{ flex: 1 }}>{c}</span>
+                        <span style={{ flex: 1 }}>{typeof c === "string" ? c : c}</span>
                         {isAns && <span className="ci-badge ok" style={{ fontSize: 10 }}>정답</span>}
                         {isYour && !isAns && <span className="ci-badge bad" style={{ fontSize: 10 }}>내 선택</span>}
                       </div>
@@ -417,22 +505,23 @@ function ExamResult({ examId, onBack, onRetake }) {
                   })}
                 </div>
               )}
-              {(q.type === "ox" || q.type === "short") && (
+              {(it.type === "ox" || it.type === "short") && (
                 <div style={{ display: "flex", gap: 18, fontSize: 14, marginBottom: 10, flexWrap: "wrap" }}>
-                  <span>내 답: <strong style={{ color: correct ? "var(--ci-ok)" : "var(--ci-bad)" }}>{fmtAns(q, yourRaw)}</strong></span>
-                  <span>정답: <strong style={{ color: "var(--ci-ok)" }}>{fmtAns(q, q.type === "ox" ? q.answer : q.answer)}</strong></span>
+                  <span>내 답: <strong style={{ color: correct ? "var(--ci-ok)" : "var(--ci-bad)" }}>{fmtAns(it, yourRaw)}</strong></span>
+                  {rv && <span>정답: <strong style={{ color: "var(--ci-ok)" }}>{fmtAns(it, rv.answer)}</strong></span>}
                 </div>
               )}
               {isEssay && (
                 <div style={{ marginBottom: 10 }}>
                   <div style={{ fontSize: 12.5, color: "var(--ci-muted)", marginBottom: 4 }}>내 답안</div>
                   <div style={{ background: "var(--ci-bg-2)", borderRadius: 8, padding: "10px 12px", fontSize: 14, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{yourRaw || <em style={{ color: "var(--ci-muted)" }}>미작성</em>}</div>
-                  {mf[q.id] && <div style={{ marginTop: 8, fontSize: 13.5, color: "var(--ci-ink)" }}><strong style={{ color: "var(--ci-navy)" }}>강사 피드백 · </strong>{mf[q.id]}</div>}
+                  {mf[key] && <div style={{ marginTop: 8, fontSize: 13.5, color: "var(--ci-ink)" }}><strong style={{ color: "var(--ci-navy)" }}>강사 피드백 · </strong>{mf[key]}</div>}
+                  {rv && rv.answer && <div style={{ marginTop: 8, fontSize: 13.5, color: "var(--ci-ink)" }}><strong style={{ color: "var(--ci-navy)" }}>모범답안 · </strong>{rv.answer}</div>}
                 </div>
               )}
-              {q.explanation && (
+              {rv && rv.explanation && (
                 <div style={{ background: "var(--ci-bg)", borderRadius: 8, padding: "10px 12px", fontSize: 13.5, color: "var(--ci-ink)", lineHeight: 1.6 }}>
-                  <strong style={{ color: "var(--ci-navy)" }}>해설 · </strong>{q.explanation}
+                  <strong style={{ color: "var(--ci-navy)" }}>해설 · </strong>{rv.explanation}
                 </div>
               )}
             </div>
