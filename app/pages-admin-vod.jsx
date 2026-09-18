@@ -190,8 +190,12 @@ async function fetchAllShowcaseVideos(showcaseId) {
 // 영상 제목의 "N강" 패턴에서 차시 번호를 추출 — 업로드 순서/날짜는 절대 사용하지 않는다.
 // 서로 다른 번호가 2개 이상 매칭되면(제목이 모호하면) null 을 돌려줘 자동분류하지 않고 미분류로 남긴다.
 function extractLessonNumber(title) {
+  // NFKC 정규화: Vimeo 제목에 전각(fullwidth) 숫자(예: "１강")나 기타 호환 문자로 입력된 경우
+  // \d(반각 숫자만 인식)가 전혀 매칭되지 않아 전체가 미분류로 빠지는 문제를 방지한다.
+  // 일반적인 반각 숫자 제목("1강")에는 영향이 없다(무변화).
+  const normalized = String(title || "").normalize("NFKC");
   const re = /(\d{1,3})\s*강(?=[_\s]|$)/g;
-  const nums = [...String(title || "").matchAll(re)].map((m) => Number(m[1]));
+  const nums = [...normalized.matchAll(re)].map((m) => Number(m[1]));
   if (nums.length === 0) return null;
   const uniq = [...new Set(nums)];
   return uniq.length === 1 ? uniq[0] : null;
