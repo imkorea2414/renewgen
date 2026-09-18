@@ -1903,3 +1903,24 @@ html[data-home-style="academy"] .poster:hover {
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
+/* STEP4: 학생용 차시(lessons) 플레이어 — PC: 우측 차시목록 / 모바일: 플레이어 아래 차시목록 */
+.rj-lessons-layout {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  min-height: calc(100vh - 72px);
+}
+.rj-lessons-sidebar {
+  max-height: calc(100vh - 72px);
+}
+@media (max-width: 860px) {
+  .rj-lessons-layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+  .rj-lessons-sidebar {
+    max-height: none;
+    border-left: none !important;
+    border-top: 1px solid rgba(245,241,233,0.1);
+  }
+}
+

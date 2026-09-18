@@ -383,6 +383,13 @@ function VodCourseRow({ course, open, onToggle, onChange, showToast }) {
       visibility: form.visibility === "members" ? "members" : "public",
     };
     window.setCourseOverride(course.id, patch);
+    // site_store 저장과 별개로 public.courses 도 계속 최신 상태로 동기화(STEP4 학생 lessons 권한 판정용).
+    window.vodSyncCourseFields(course.id, {
+      is_free: patch.isFree,
+      price: patch.salePrice,
+      visibility: patch.visibility,
+      class_names: patch.classNames || null,
+    });
     onChange();
     showToast("저장되었습니다");
     onToggle();
@@ -658,6 +665,10 @@ function VodAddForm({ onClose, onAdded }) {
     const r = await window.vodCreateCourseWithLessons(courseRow, lessonsToPayload(lessons), siteCourse);
     setSaving(false);
     if (!r.ok) { alert("강좌 저장 실패: " + (r.error || "알 수 없는 오류")); return; }
+
+    // vod_create_course_with_lessons(STEP3, 수정하지 않음)는 courses.class_names 컬럼을 알지 못하므로
+    // (STEP4에서 새로 추가된 컬럼) 개설 시 지정한 "무료 대상 반"을 별도로 한 번 더 동기화한다.
+    if (siteCourse.classNames) window.vodSyncCourseFields(id, { class_names: siteCourse.classNames });
 
     // RPC가 courses+lessons+site_store 를 이미 원자적으로 저장했으므로, 여기서는
     // 현재 브라우저의 로컬 캐시/화면(window.COURSES)만 즉시 반영한다(중복 클라우드 push는 무해함).
