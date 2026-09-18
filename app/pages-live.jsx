@@ -16,6 +16,7 @@ function PlayerPage({ courseId }) {
   const [showNotes, setShowNotes] = useStateP(true);
   const [chapterIdx, setChapterIdx] = useStateP(2);
   const [access, setAccess] = useStateP(null); // null=확인중, {canWatch, reason}
+  const [studentLessons, setStudentLessons] = useStateP(null); // null=확인 전, {ok, reason, lessons}
 
   // 접근권 판정 (구독자 무료 / 구매자 / 잠금)
   useEffectP(() => {
@@ -24,6 +25,17 @@ function PlayerPage({ courseId }) {
     window.resolveAccess(user, course).then((a) => { if (alive) setAccess(a); });
     return () => { alive = false; };
   }, [user, courseId]);
+
+  // STEP4: 관리자가 실제로 등록한 차시(lessons)가 있는지 서버에 물어본다.
+  // vod_get_student_lessons 는 자체적으로 권한을 재검증하므로 프론트의 access/RJ_PUBLIC_PREVIEW 와
+  // 무관하게, 실제 수강 권한이 없으면 lessons 를 절대 돌려주지 않는다.
+  useEffectP(() => {
+    let alive = true;
+    setStudentLessons(null);
+    if (!course) return;
+    window.vodFetchStudentLessons(course.id).then((r) => { if (alive) setStudentLessons(r); });
+    return () => { alive = false; };
+  }, [courseId]);
 
   // Fake progress ticker
   useEffectP(() => {
@@ -92,7 +104,13 @@ function PlayerPage({ courseId }) {
     );
   }
 
-  // 쇼케이스(여러 강의)가 연결된 강좌 → 쇼케이스 플레이어로
+  // STEP4: 관리자가 실제로 등록한 차시(lessons)가 있는 강좌 → 새 차시 플레이어
+  // (studentLessons 는 서버가 이미 실제 권한을 검증한 뒤 반환한 값 — 여기서는 그 결과만 사용한다)
+  if (studentLessons && studentLessons.ok && studentLessons.lessons && studentLessons.lessons.length > 0) {
+    return <LessonsPlayer course={course} ins={ins} lessons={studentLessons.lessons} reason={studentLessons.reason} onBack={() => navigate("/courses/" + course.id)} />;
+  }
+
+  // 쇼케이스(여러 강의)가 연결된 강좌 → 쇼케이스 플레이어로 (lessons==0 인 기존 강좌는 이 경로 그대로 유지)
   if (course.showcaseId) {
     return <ShowcasePlayer course={course} ins={ins} access={access} onBack={() => navigate("/courses/" + course.id)} />;
   }
@@ -372,6 +390,106 @@ function ShowcasePlayer({ course, ins, access, onBack }) {
         <p style={{ fontSize: 12.5, color: "rgba(245,241,233,0.5)", marginTop: 14, lineHeight: 1.7 }}>
           강의 목록·순서는 Vimeo 쇼케이스를 따릅니다 · 목록에서 강의를 선택해 이어 시청하세요 · <strong style={{ color: "rgba(245,241,233,0.75)" }}>전체화면</strong>은 우상단 버튼 또는 영상 우하단의 Vimeo 전체화면 아이콘으로 진입할 수 있습니다 (Esc로 해제).
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────
+// STEP4: 실제 등록된 차시(lessons) 기반 플레이어 — 관리자가 STEP3에서 강좌별로 저장한
+// 여러 개의 단일 Vimeo 영상을 1강, 2강… 순서로 재생한다. lessons 는 vod_get_student_lessons
+// (서버)가 이미 실제 권한을 검증한 뒤 넘겨준 값만 사용하며, course_id 변조 등은 그 쪽에서 막힌다.
+// PC: 플레이어 + 우측 차시 목록 / 모바일: 플레이어 아래 차시 목록(.rj-lessons-layout, shared/site.css)
+// ──────────────────────────────────────────────────────────────────
+function LessonsPlayer({ course, ins, lessons, reason, onBack }) {
+  const [activeIdx, setActiveIdx] = useStateP(0);
+  const active = lessons[activeIdx] || lessons[0];
+
+  const badge = reason === "subscriber" ? "✓ 구독중 — 무제한 시청"
+    : reason === "purchased" ? "✓ 구매한 강의"
+    : reason === "enrolled" ? "✓ 수강생 무료 다시보기"
+    : reason === "staff" ? "관리자 미리보기"
+    : reason === "free" ? "무료 공개" : "시청 가능";
+
+  return (
+    <div className="page-enter" style={{ background: "#000", color: "var(--rj-paper)", minHeight: "calc(100vh - 72px)" }}>
+      <div className="rj-lessons-layout">
+        {/* Player + meta */}
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          <div style={{ position: "relative", background: "#0c0c0c", aspectRatio: "16 / 9" }}>
+            {active && active.vimeo_id ? (
+              <iframe
+                key={active.id}
+                title={active.title}
+                src={window.videoEmbedSrc(active.vimeo_id, active.vimeo_hash)}
+                style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowFullScreen
+              />
+            ) : (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.5)", fontSize: 13 }}>
+                이 차시에는 아직 영상이 연결되지 않았습니다
+              </div>
+            )}
+            <div style={{ position: "absolute", top: 16, left: 16, right: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <button className="btn btn-sm" style={{ background: "rgba(0,0,0,0.5)", color: "#fff", border: "1px solid rgba(255,255,255,0.2)", backdropFilter: "blur(8px)" }} onClick={onBack}>
+                <Icon name="arrowLeft" size={14} /> {course.title}
+              </button>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 12, fontWeight: 700, padding: "5px 12px", borderRadius: 999, backdropFilter: "blur(8px)" }}>{badge}</span>
+            </div>
+          </div>
+
+          <div style={{ padding: 28, color: "var(--rj-paper)" }}>
+            <div className="eyebrow" style={{ color: "rgba(245,241,233,0.5)" }}>
+              {String(activeIdx + 1).padStart(2, "0")}강 / {lessons.length}강
+            </div>
+            <h1 style={{ fontFamily: "var(--font-kr-serif)", fontWeight: 500, fontSize: 28, letterSpacing: "-0.025em", margin: "10px 0 6px" }}>{active ? active.title : course.title}</h1>
+            <div style={{ fontSize: 14, color: "rgba(245,241,233,0.6)" }}>{ins?.name} · {course.title}</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
+              <button className="btn btn-sm" style={{ background: "rgba(245,241,233,0.1)", color: "#fff", border: "1px solid rgba(245,241,233,0.18)" }}
+                disabled={activeIdx === 0} onClick={() => setActiveIdx((i) => Math.max(0, i - 1))}>
+                <Icon name="arrowLeft" size={14} /> 이전 강의
+              </button>
+              <button className="btn btn-sm" style={{ background: "rgba(245,241,233,0.1)", color: "#fff", border: "1px solid rgba(245,241,233,0.18)" }}
+                disabled={activeIdx >= lessons.length - 1} onClick={() => setActiveIdx((i) => Math.min(lessons.length - 1, i + 1))}>
+                다음 강의 <Icon name="arrow" size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 차시 목록 (PC: 우측 / 모바일: 플레이어 아래) */}
+        <aside className="rj-lessons-sidebar" style={{ background: "#0a0a0a", borderLeft: "1px solid rgba(245,241,233,0.1)", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: 20, borderBottom: "1px solid rgba(245,241,233,0.1)" }}>
+            <div className="eyebrow" style={{ color: "rgba(245,241,233,0.5)" }}>차시 목록</div>
+            <div style={{ fontFamily: "var(--font-kr-serif)", fontSize: 18, marginTop: 8, letterSpacing: "-0.025em" }}>{course.title}</div>
+          </div>
+          <div style={{ overflowY: "auto", flex: 1, padding: 12 }}>
+            {lessons.map((l, i) => (
+              <button key={l.id} onClick={() => setActiveIdx(i)} style={{
+                width: "100%", textAlign: "left", padding: "12px 14px", borderRadius: "var(--rj-r-sm)",
+                background: i === activeIdx ? "rgba(251,244,189,0.1)" : "transparent",
+                border: i === activeIdx ? "1px solid rgba(251,244,189,0.3)" : "1px solid transparent",
+                marginBottom: 4, cursor: "pointer", display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 12, alignItems: "center", color: "#fff",
+              }}>
+                <span style={{
+                  width: 24, height: 24, borderRadius: "50%", border: "1px solid rgba(245,241,233,0.3)",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontFamily: "var(--font-en)",
+                  background: i === activeIdx ? "var(--rj-accent)" : "transparent",
+                  color: i === activeIdx ? "var(--rj-ink)" : "rgba(245,241,233,0.6)",
+                  borderColor: i === activeIdx ? "var(--rj-accent)" : "rgba(245,241,233,0.3)",
+                }}>
+                  {i === activeIdx ? <Icon name="play" size={9} /> : String(i + 1).padStart(2, "0")}
+                </span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: i === activeIdx ? 600 : 400, lineHeight: 1.4 }}>{i + 1}강 · {l.title}</div>
+                  <div style={{ fontSize: 11, color: "rgba(245,241,233,0.5)", marginTop: 3 }}>{l.duration_sec ? fmtTime(l.duration_sec) : "재생시간 미등록"}</div>
+                </div>
+                {i === activeIdx && <span className="tag" style={{ borderColor: "rgba(251,244,189,0.4)", color: "var(--rj-accent)", fontSize: 9, height: 18, padding: "0 6px" }}>재생중</span>}
+              </button>
+            ))}
+          </div>
+        </aside>
       </div>
     </div>
   );

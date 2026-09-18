@@ -48,4 +48,17 @@ async function vodFetchLessons(courseId) {
   } catch (e) { return { ok: false, error: String(e), lessons: [] }; }
 }
 
-Object.assign(window, { vodCreateCourseWithLessons, vodReplaceCourseLessons, vodFetchLessons });
+// 관리자 "편집 → 저장"(및 개설) 후 site_store 뿐 아니라 public.courses 도 계속 최신으로 유지하기 위한 보조 동기화.
+//   fields: { is_free?, price?, visibility?, class_names? } — 넘긴 키만 courses 에 반영된다(STEP4 학생 lessons
+//   권한 판정이 courses 값을 기준으로 하므로 필요). site_store 저장(기존 흐름)과 별개의 부가 호출이며,
+//   실패해도 site_store 저장 자체는 이미 끝난 뒤이므로 화면 흐름을 막지 않고 콘솔에만 남긴다.
+async function vodSyncCourseFields(courseId, fields) {
+  const sb = _rjSbLessons(); if (!sb) return { ok: false, error: "Supabase 연결 없음" };
+  try {
+    const { error } = await sb.rpc("vod_sync_course_fields", { p_course_id: courseId, p_fields: fields || {} });
+    if (error) { console.warn("vodSyncCourseFields 실패:", error.message); return { ok: false, error: error.message }; }
+    return { ok: true };
+  } catch (e) { console.warn("vodSyncCourseFields 실패:", e); return { ok: false, error: String(e) }; }
+}
+
+Object.assign(window, { vodCreateCourseWithLessons, vodReplaceCourseLessons, vodFetchLessons, vodSyncCourseFields });
