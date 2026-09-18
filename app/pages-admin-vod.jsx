@@ -585,6 +585,8 @@ function LessonsManagePanel({ course, onClose, showToast }) {
     const r = await window.vodReplaceCourseLessons(course.id, lessonsToPayload(lessons), null);
     setSaving(false);
     if (!r.ok) { alert("차시 저장 실패: " + (r.error || "알 수 없는 오류")); return; }
+    // site_store/window.COURSES 의 lessons 개수도 함께 동기화 — 학생 목록 노출 필터(publicCourses 등)가 이 값을 기준으로 하기 때문.
+    window.setCourseOverride(course.id, { lessons: lessons.length });
     showToast("차시가 저장되었습니다");
   };
 
@@ -636,7 +638,7 @@ function VodAddForm({ onClose, onAdded }) {
       subtitle: "", instructor: instructorId, subject: f.subject,
       level: f.level.trim() || "전체", format: "VOD",
       classNames: f.className.trim(),
-      lessons: 0, hours: 0, weeks: 0,
+      lessons: lessons.length, hours: 0, weeks: 0,
       price: Number(f.salePrice) || 0, salePrice: Number(f.salePrice) || 0, recordingPrice: Number(f.salePrice) || 0,
       rating: 0, reviews: 0, enrolled: 0,
       color: VOD_COLORS[(window.COURSES || []).length % VOD_COLORS.length],

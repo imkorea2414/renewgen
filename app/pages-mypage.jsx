@@ -19,7 +19,7 @@ function myAccessibleCourses(user) {
   if (!user) return [];
   const isStaff = window.isStaff && window.isStaff(user);
   const demo = (window.demoAccessState && window.demoAccessState()) || { sub: false, courses: [] };
-  const all = (window.COURSES || []).filter((c) => c.showcaseId || c.vimeoId);
+  const all = (window.COURSES || []).filter((c) => c.showcaseId || c.vimeoId || Number(c.lessons || 0) > 0);
   if (isStaff || demo.sub) return all;
   return all.filter((c) => {
     if (c.isFree) return true;
@@ -31,7 +31,7 @@ function myAccessibleCourses(user) {
 
 // 학생 "강의" 탭 — 관리자가 올린 모든 VOD 강좌 목록
 function StudentCoursesPanel({ user, navigate }) {
-  const all = (window.COURSES || []).filter((c) => c.showcaseId || c.vimeoId);
+  const all = (window.COURSES || []).filter((c) => c.showcaseId || c.vimeoId || Number(c.lessons || 0) > 0);
   if (all.length === 0) {
     return (
       <div>

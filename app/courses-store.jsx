@@ -94,8 +94,8 @@ function isCustomCourse(id) {
 // /courses 메뉴에서는 둘 다 노출됩니다 (비수강생이 둘러보고 결제할 수 있게).
 function courseVisibility(c) { return c && c.visibility === "members" ? "members" : "public"; }
 function publicCourses() {
-  // VOD 강좌(쇼케이스 또는 단일 영상이 연결된)만 노출 — 데모/빈 강좌는 숨김
-  return (window.COURSES || []).filter((c) => c.showcaseId || c.vimeoId);
+  // VOD 강좌(쇼케이스, 단일 영상, 또는 STEP3 개별 lessons 로 구성된 강좌)만 노출 — 데모/빈 강좌는 숨김
+  return (window.COURSES || []).filter((c) => c.showcaseId || c.vimeoId || Number(c.lessons || 0) > 0);
 }
 function memberCourses() { return (window.COURSES || []).filter((c) => courseVisibility(c) === "members"); }
 
