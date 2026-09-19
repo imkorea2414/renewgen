@@ -348,7 +348,8 @@ function Curriculum({ course, owned, onPlay }) {
 function stripCurriculumTitlePrefix(title) {
   const t = String(title || "");
   const m = t.match(/\d{1,3}\s*강/);
-  return m ? t.slice(m.index) : t;
+  const stripped = m ? t.slice(m.index) : t;
+  return stripped.replace(/_/g, " "); // 화면 표시용 — "1강_소화" → "1강 소화" (DB 원본은 무수정)
 }
 
 // 사람이 읽기 쉬운 길이 표기 — "9분 39초" / "47초"
