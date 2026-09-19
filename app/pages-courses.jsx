@@ -147,6 +147,10 @@ function CourseDetailPage({ courseId }) {
     );
   }
 
+  // publicCourses()(courses-store.jsx)와 동일한 기준 — "실제 VOD 콘텐츠(쇼케이스/단일 영상/lessons)를
+  // 가진 강좌인가"를 문자열(format 등) 판정 없이 실데이터로 판정한다. LIVE 데모 강좌는 셋 다 없어 false.
+  const isVodCourse = !!(course.showcaseId || course.vimeoId || Number(course.lessons || 0) > 0);
+
   return (
     <div className="page-enter">
       {/* Hero */}
@@ -167,7 +171,7 @@ function CourseDetailPage({ courseId }) {
               <div style={{ display: "flex", gap: 24, marginTop: 36, paddingTop: 24, borderTop: "1px solid rgba(245,241,233,0.18)", flexWrap: "wrap" }}>
                 {[
                   ["FORMAT", course.format],
-                  ["WEEKS",  course.weeks + " weeks"],
+                  ...(isVodCourse ? [] : [["WEEKS", course.weeks + " weeks"]]),
                   ["LESSONS", course.lessons + " 강"],
                   ["LEVEL",  course.level],
                   ["LANGUAGE", "한국어"],
@@ -282,13 +286,24 @@ function CourseDetailPage({ courseId }) {
           </div>
           <aside>
             <div className="card" style={{ padding: 24, position: "sticky", top: 160 }}>
-              <div className="eyebrow" style={{ color: "var(--rj-muted)" }}>Next Live · 다음 라이브</div>
-              <div style={{ marginTop: 14, fontFamily: "var(--font-kr-serif)", fontSize: 22, letterSpacing: "-0.025em" }}>
-                {course.nextLive ? new Date(course.nextLive).toLocaleDateString("ko-KR", { month: "short", day: "numeric", weekday: "short" }) : "—"}
-              </div>
-              <div style={{ fontSize: 14, color: "var(--rj-muted)", marginTop: 4 }}>
-                {course.nextLive ? new Date(course.nextLive).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) + " · 강의실 " + course.classInRoomId : "VOD 전용 강의"}
-              </div>
+              {isVodCourse ? (
+                <>
+                  <div className="eyebrow" style={{ color: "var(--rj-muted)" }}>강의 수강</div>
+                  <div style={{ marginTop: 14, fontFamily: "var(--font-kr-serif)", fontSize: 22, letterSpacing: "-0.025em" }}>
+                    VOD 전용 강의
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="eyebrow" style={{ color: "var(--rj-muted)" }}>Next Live · 다음 라이브</div>
+                  <div style={{ marginTop: 14, fontFamily: "var(--font-kr-serif)", fontSize: 22, letterSpacing: "-0.025em" }}>
+                    {course.nextLive ? new Date(course.nextLive).toLocaleDateString("ko-KR", { month: "short", day: "numeric", weekday: "short" }) : "—"}
+                  </div>
+                  <div style={{ fontSize: 14, color: "var(--rj-muted)", marginTop: 4 }}>
+                    {course.nextLive ? new Date(course.nextLive).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) + " · 강의실 " + course.classInRoomId : "VOD 전용 강의"}
+                  </div>
+                </>
+              )}
               {course.nextLive && !(course.showcaseId || course.vimeoId) && (
                 <button className="btn btn-primary btn-block" style={{ marginTop: 18 }} onClick={() => navigate("/live/" + course.id)}>
                   <Icon name="live" size={14} /> 실시간 수업 입장
@@ -325,6 +340,15 @@ function Curriculum({ course, owned, onPlay }) {
   if (hasLessons) return <VodLessonsCurriculum course={course} />;
   if (course.syllabus && course.syllabus.length > 0) return <LiveCurriculum course={course} owned={owned} onPlay={onPlay} />;
   return <CurriculumComingSoon />;
+}
+
+// 커리큘럼 화면 표시용 — 반복되는 강좌명 접두사("[온택 검정고시] 중졸과학" 등, 표기가 제각각이라
+// 접두사 자체를 정규식으로 매칭하지 않는다)를 지우고 "N강"부터 보여준다. DB의 title 원본은 건드리지
+// 않고 렌더링 시점에만 자른다. "N강" 패턴을 못 찾으면 원본을 그대로 보여준다(안전 폴백).
+function stripCurriculumTitlePrefix(title) {
+  const t = String(title || "");
+  const m = t.match(/\d{1,3}\s*강/);
+  return m ? t.slice(m.index) : t;
 }
 
 // 사람이 읽기 쉬운 길이 표기 — "9분 39초" / "47초"
@@ -389,7 +413,7 @@ function VodLessonsCurriculum({ course }) {
               borderTop: i === 0 ? "none" : "1px solid var(--rj-faint)",
             }}>
               <span className="num-en" style={{ fontSize: 12, letterSpacing: "0.14em", color: "var(--rj-muted)", fontWeight: 700, width: 64, flexShrink: 0 }}>{i + 1}차시</span>
-              <span style={{ flex: 1, fontFamily: "var(--font-kr-serif)", fontSize: 15, letterSpacing: "-0.01em" }}>{l.title}</span>
+              <span style={{ flex: 1, fontFamily: "var(--font-kr-serif)", fontSize: 15, letterSpacing: "-0.01em" }}>{stripCurriculumTitlePrefix(l.title)}</span>
               <span style={{ fontSize: 12.5, color: "var(--rj-muted)", flexShrink: 0 }}>{formatDurationKo(l.duration_sec)}</span>
             </div>
           ))}

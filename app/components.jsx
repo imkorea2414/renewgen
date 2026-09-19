@@ -427,7 +427,9 @@ function CourseRowCard({ course, onOpen }) {
         </div>
       </div>
       <div style={{ textAlign: "right" }}>
-        <div className="num-en" style={{ textDecoration: "line-through", color: "var(--rj-muted)", fontSize: 13 }}>{formatKRW(course.price)}</div>
+        {Number(course.price) > Number(course.salePrice) && (
+          <div className="num-en" style={{ textDecoration: "line-through", color: "var(--rj-muted)", fontSize: 13 }}>{formatKRW(course.price)}</div>
+        )}
         <div className="num-en" style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.02em" }}>{formatKRW(course.salePrice)}</div>
         <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={onOpen}>자세히 보기 <Icon name="arrow" size={14} /></button>
       </div>
