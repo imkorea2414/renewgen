@@ -187,18 +187,47 @@ async function fetchAllShowcaseVideos(showcaseId) {
   return { ok: true, items: all, total: total || all.length };
 }
 
-// 영상 제목의 "N강" 패턴에서 차시 번호를 추출 — 업로드 순서/날짜는 절대 사용하지 않는다.
-// 서로 다른 번호가 2개 이상 매칭되면(제목이 모호하면) null 을 돌려줘 자동분류하지 않고 미분류로 남긴다.
-function extractLessonNumber(title) {
-  // NFKC 정규화: Vimeo 제목에 전각(fullwidth) 숫자(예: "１강")나 기타 호환 문자로 입력된 경우
-  // \d(반각 숫자만 인식)가 전혀 매칭되지 않아 전체가 미분류로 빠지는 문제를 방지한다.
-  // 일반적인 반각 숫자 제목("1강")에는 영향이 없다(무변화).
+// 영상 제목에서 차시 번호를 추출 — 업로드 순서/날짜는 절대 사용하지 않는다.
+//   · "1강" 처럼 단일 번호 → [1]
+//   · "28,29,30강" / "28, 29, 30강" / "5·6강" 처럼 쉼표·가운뎃점으로 묶여 "강"이 한 번만 붙은 경우
+//     → 그 목록 전체를 [28,29,30] 로 반환(한 영상이 여러 차시를 커버하는 정상 사례 — STEP4의 "N,M강" 요구사항).
+//   · "5강 6강 특강" 처럼 서로 다른 "N강"이 제목 안에 따로 여러 번 나타나 번호가 모호하면 null(미분류).
+//   · "7강 7강" 처럼 같은 번호가 여러 번 나타나는 것은 정상 인식(기존 동작 유지).
+//   · "5~7강" / "5-7강" 같은 범위 표기는 의미가 모호해 임의로 5,6,7로 확장하지 않고 문자열 "range" 를
+//     돌려줘 화면에 별도로 보고한다(미분류와 구분).
+// NFKC 정규화: 전각(fullwidth) 숫자·쉼표(예: "１강", "２８，２９강")도 반각으로 인식하기 위함.
+function extractLessonNumbers(title) {
   const normalized = String(title || "").normalize("NFKC");
-  const re = /(\d{1,3})\s*강(?=[_\s]|$)/g;
-  const nums = [...normalized.matchAll(re)].map((m) => Number(m[1]));
-  if (nums.length === 0) return null;
-  const uniq = [...new Set(nums)];
-  return uniq.length === 1 ? uniq[0] : null;
+
+  const rangeRe = /\d{1,3}\s*[~\-]\s*\d{1,3}\s*강(?=[_\s]|$)/;
+  if (rangeRe.test(normalized)) return "range";
+
+  const listRe = /(\d{1,3}(?:\s*[,·]\s*\d{1,3})*)\s*강(?=[_\s]|$)/g;
+  const matches = [...normalized.matchAll(listRe)];
+  if (matches.length === 0) return null;
+
+  if (matches.length === 1) {
+    const nums = matches[0][1].split(/[,·]/).map((s) => Number(s.trim()));
+    return [...new Set(nums)];
+  }
+
+  // "N강"이 서로 다른 자리에 여러 번 나타남 — 전부 같은 번호를 가리키면 인정, 다르면 모호(null)
+  const allNums = matches.flatMap((m) => m[1].split(/[,·]/).map((s) => Number(s.trim())));
+  const uniq = [...new Set(allNums)];
+  return uniq.length === 1 ? uniq : null;
+}
+
+// 채우기 시 표시할 차시 제목 구성 — Vimeo 원본 제목·데이터는 전혀 건드리지 않고, 로컬 lessons 항목의
+// title 문자열만 만든다. 제목 안의 "N강"(또는 "28,29,30강" 같은 결합 표기) 부분을 해당 차시 번호로
+// 바꿔치기해서, 한 영상이 여러 차시를 커버할 때도 관리자가 "중졸과학 28강"처럼 바로 구분할 수 있게 한다.
+function buildLessonTitle(originalTitle, num) {
+  const title = String(originalTitle || "");
+  const normalized = title.normalize("NFKC");
+  const re = /\d{1,3}(?:\s*[,·]\s*\d{1,3})*\s*강(?=[_\s]|$)/;
+  const m = normalized.match(re);
+  if (!m) return title;
+  const idx = normalized.indexOf(m[0]);
+  return normalized.slice(0, idx) + num + "강" + normalized.slice(idx + m[0].length);
 }
 
 // Showcase 하나를 골라 그 안의 영상 전체를 "N강" 기준으로 자동 분류·정렬해 검증 결과를 보여주는 패널.
@@ -217,9 +246,10 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
     setPhase("loading"); setErr("");
     fetchAllShowcaseVideos(id).then((r) => {
       if (!r.ok) { setPhase("error"); setErr(r.msg || "불러오기 실패"); return; }
-      const classified = r.items.map((it) => ({ ...it, _num: extractLessonNumber(it.name) }));
-      const nums = classified.filter((c) => c._num != null).map((c) => c._num);
-      setExpectedTotal(nums.length ? Math.max(...nums) : 0);
+      // _nums: number[](인식된 차시 번호 1개 이상) | null(미분류/모호) | "range"(범위 표기, 별도 보고)
+      const classified = r.items.map((it) => ({ ...it, _nums: extractLessonNumbers(it.name) }));
+      const allNums = classified.flatMap((c) => (Array.isArray(c._nums) ? c._nums : []));
+      setExpectedTotal(allNums.length ? Math.max(...allNums) : 0);
       setItems(classified);
       setPhase("reviewing");
     });
@@ -232,30 +262,45 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
     runFetch(id);
   };
 
+  // byNum[n] = 그 번호를 자기 번호 목록에 포함하는 영상들(정상 사례: 28,29,30강 한 영상이 세 번호 모두에 등록됨)
   const byNum = {};
-  items.forEach((c) => { if (c._num != null) (byNum[c._num] = byNum[c._num] || []).push(c); });
-  const unclassified = items.filter((c) => c._num == null);
-  const duplicateNums = Object.keys(byNum).map(Number).filter((n) => byNum[n].length > 1).sort((a, b) => a - b);
+  items.forEach((c) => {
+    if (Array.isArray(c._nums)) c._nums.forEach((n) => { (byNum[n] = byNum[n] || []).push(c); });
+  });
+  const unclassified = items.filter((c) => c._nums == null);
+  const rangeItems = items.filter((c) => c._nums === "range");
+  // 중복 판정: "동일 강의번호에 서로 다른 영상 후보가 둘 이상" 있을 때만 중복으로 본다.
+  // 같은 영상 하나가 여러 번호(28,29,30강)를 커버하는 것은 각 번호마다 후보가 1개뿐이므로 중복이 아니다.
+  const duplicateNums = Object.keys(byNum).map(Number).filter((n) => {
+    const uniqueIds = new Set(byNum[n].map((c) => String(c.id)));
+    return uniqueIds.size > 1;
+  }).sort((a, b) => a - b);
   const uniqueNums = Object.keys(byNum).map(Number);
-  const recognizedCount = items.length - unclassified.length;
+  const recognizedCount = uniqueNums.length; // 인식된 "차시 번호" 개수(영상 개수와 다를 수 있음)
   const missing = [];
   for (let n = 1; n <= expectedTotal; n++) if (!byNum[n]) missing.push(n);
-  const allMatched = phase === "reviewing" && expectedTotal > 0
+  const allMatched = phase === "reviewing" && expectedTotal > 0 && rangeItems.length === 0
     && missing.length === 0 && duplicateNums.length === 0 && unclassified.length === 0 && uniqueNums.length === expectedTotal;
 
-  // 번호가 "고유하게" 인식된 영상만 채우기 대상 — 중복 번호는 자동으로 하나를 고르지 않는다.
-  const fillable = items.filter((c) => c._num != null && byNum[c._num].length === 1).slice().sort((a, b) => a._num - b._num);
+  // 번호별로 후보가 "고유하게" 하나뿐인 경우만 채우기 대상 — 중복 번호는 자동으로 하나를 고르지 않는다.
+  // 한 영상이 여러 번호를 커버하면(28,29,30강) 그 번호 개수만큼 별도의 차시 항목이 생긴다.
+  const fillableEntries = [];
+  for (let n = 1; n <= expectedTotal; n++) {
+    const candidates = byNum[n] || [];
+    const uniqueCandidates = [...new Map(candidates.map((c) => [String(c.id), c])).values()];
+    if (uniqueCandidates.length === 1) fillableEntries.push({ num: n, item: uniqueCandidates[0] });
+  }
   const hasExistingContent = lessons.some((l) => l.title.trim() || l.vimeo_id);
 
   const doFill = (mode) => {
-    const newLessons = fillable.map((it) => {
-      const media = window.parseVimeoMedia(it.link || String(it.id));
+    const newLessons = fillableEntries.map(({ num, item }) => {
+      const media = window.parseVimeoMedia(item.link || String(item.id));
       return {
-        title: it.name || "",
-        vimeo_id: media.type === "video" ? media.id : String(it.id || ""),
+        title: buildLessonTitle(item.name, num),
+        vimeo_id: media.type === "video" ? media.id : String(item.id || ""),
         vimeo_hash: media.type === "video" ? (media.hash || "") : "",
-        duration_sec: Number(it.duration) || 0,
-        _vimeoName: it.name || "",
+        duration_sec: Number(item.duration) || 0,
+        _vimeoName: item.name || "",
       };
     });
     onFill(newLessons, mode);
@@ -294,17 +339,22 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
         <div>
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", marginBottom: 10, fontSize: 12.5 }}>
             <span>Showcase 영상 <strong>{items.length}</strong>개</span>
-            <span>강의번호 인식 <strong>{recognizedCount}</strong>개</span>
+            <span>실제 매칭 차시 <strong>{recognizedCount}</strong>개</span>
             <span>예상 차시:
               <input type="number" min="0" value={expectedTotal}
                 onChange={(e) => setExpectedTotal(Math.max(0, Number(e.target.value) || 0))}
                 style={{ ...inStyle, width: 64, height: 26, marginLeft: 6, display: "inline-block" }} /> 강
             </span>
           </div>
+          <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "0 0 10px", lineHeight: 1.5 }}>
+            "실제 매칭 차시"는 인식된 차시 번호의 개수입니다 · 한 영상 제목이 "28,29,30강"처럼 여러 번호를 함께 표기하면
+            그 영상 하나가 여러 차시로 계산되므로 Showcase 영상 수보다 많을 수 있습니다.
+          </p>
           <div style={{ display: "grid", gap: 4, fontSize: 12.5, marginBottom: 10 }}>
             <div>누락: {missing.length ? missing.map((n) => n + "강").join(", ") : "없음"}</div>
             <div>중복: {duplicateNums.length ? duplicateNums.map((n) => n + "강").join(", ") : "없음"}</div>
             <div>미분류: {unclassified.length}개</div>
+            <div>범위 표기(수동 확인 필요): {rangeItems.length}개</div>
             <div style={{ fontWeight: 700, color: allMatched ? "var(--ci-ok)" : "var(--ci-bad)" }}>
               {allMatched ? ("✓ 1~" + expectedTotal + "강 전체 확인 완료") : "⚠ 전체 매칭 확인 필요"}
             </div>
@@ -323,6 +373,17 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
               ))}
             </div>
           )}
+          {rangeItems.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>범위 표기 발견(자동 처리 안 함 — 직접 확인 필요)</div>
+              <ul style={{ margin: "2px 0 0 18px", padding: 0, fontSize: 12 }}>
+                {rangeItems.map((it) => <li key={it.id}>{it.name} · ID {it.id}</li>)}
+              </ul>
+              <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "4px 0 0", lineHeight: 1.5 }}>
+                "5~7강"/"5-7강" 같은 범위 표기는 의미가 모호해 자동으로 5,6,7강으로 확장하지 않았습니다 · 개별 "Vimeo에서 선택"으로 직접 추가해주세요.
+              </p>
+            </div>
+          )}
           {unclassified.length > 0 && (
             <div style={{ marginBottom: 10 }}>
               <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>미분류 영상(번호를 찾지 못함)</div>
@@ -333,7 +394,8 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
           )}
 
           <p style={{ fontSize: 11, color: "var(--ci-muted)", margin: "0 0 10px", lineHeight: 1.5 }}>
-            번호가 고유하게 인식된 {fillable.length}개만 아래 "채우기"에 포함됩니다 · 중복/미분류 영상은 필요하면 개별 "Vimeo에서 선택"으로 직접 추가해주세요.
+            번호가 고유하게 인식된 {fillableEntries.length}개 차시만 아래 "채우기"에 포함됩니다(한 영상이 여러 번호를 커버하면 그만큼 여러 차시로 계산) ·
+            중복/미분류/범위 표기 영상은 필요하면 개별 "Vimeo에서 선택"으로 직접 추가해주세요.
           </p>
           {!allMatched && (
             <p style={{ fontSize: 12, color: "var(--ci-bad)", margin: "0 0 10px", fontWeight: 700, lineHeight: 1.5 }}>
@@ -346,7 +408,7 @@ function ShowcaseImportPanel({ defaultShowcaseId, lessons, onFill, onClose }) {
           {!confirmMode ? (
             <button type="button" className="ci-act navy" disabled={!allMatched}
               onClick={() => (hasExistingContent ? setConfirmMode(true) : doFill("replace"))}>
-              <Icon name="check" size={12} /> 이 목록을 차시에 채우기 ({fillable.length}개)
+              <Icon name="check" size={12} /> 이 목록을 차시에 채우기 ({fillableEntries.length}개)
             </button>
           ) : (
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
