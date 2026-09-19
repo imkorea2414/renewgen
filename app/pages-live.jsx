@@ -6,7 +6,7 @@ const { useState: useStateP, useEffect: useEffectP, useRef: useRefP } = React;
 // /player/:id  — VOD viewer
 // ──────────────────────────────────────────────────────────────────
 function PlayerPage({ courseId }) {
-  const { navigate, showToast, user } = useApp();
+  const { navigate, user } = useApp();
   const course = findCourse(courseId);
   const ins = course ? findInstructor(course.instructor) : null;
   const [activeLesson, setActiveLesson] = useStateP(2);
@@ -17,6 +17,7 @@ function PlayerPage({ courseId }) {
   const [chapterIdx, setChapterIdx] = useStateP(2);
   const [access, setAccess] = useStateP(null); // null=확인중, {canWatch, reason}
   const [studentLessons, setStudentLessons] = useStateP(null); // null=확인 전, {ok, reason, lessons}
+  const [buyOpen, setBuyOpen] = useStateP(false);
 
   // 접근권 판정 (구독자 무료 / 구매자 / 잠금)
   useEffectP(() => {
@@ -91,15 +92,23 @@ function PlayerPage({ courseId }) {
             <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "var(--rj-paper-2)", color: "var(--rj-muted)", fontWeight: 800, fontSize: 12, padding: "5px 11px", borderRadius: 999, alignSelf: "flex-start" }}>단건 구매</div>
             <h3 style={{ fontWeight: 900, fontSize: 22, letterSpacing: "-0.03em", margin: "16px 0 4px", color: "var(--rj-ink)" }}>이 강의만 구매</h3>
             <p style={{ fontSize: 13.5, color: "var(--rj-muted)", margin: 0, lineHeight: 1.6 }}>{course.title} 녹화본 전체를 <strong style={{ color: "var(--rj-ink)" }}>평생 소장</strong></p>
-            <div style={{ fontFamily: "var(--font-en)", fontWeight: 800, fontSize: 30, margin: "18px 0 2px", color: "var(--rj-ink)" }}>{won(course.recordingPrice || 300000)}</div>
-            <button className="btn btn-primary btn-lg" style={{ marginTop: "auto" }} onClick={async () => {
-              window.demoBuyCourse(course.id);
-              const a = await window.resolveAccess(user, course); setAccess(a);
-              showToast("구매 완료 — 이제 시청할 수 있습니다");
-            }}>이 강의 구매하기</button>
-            <p style={{ fontSize: 11.5, color: "var(--rj-muted)", textAlign: "center", margin: "10px 0 0" }}>결제 연동 전 · 시연용 구매 버튼</p>
+            <div style={{ fontFamily: "var(--font-en)", fontWeight: 800, fontSize: 30, margin: "18px 0 2px", color: "var(--rj-ink)" }}>{won(course.recordingPrice || course.salePrice || course.price || 300000)}</div>
+            <button className="btn btn-primary btn-lg" style={{ marginTop: "auto" }} onClick={() => setBuyOpen(true)}>이 강의 구매하기</button>
+            <p style={{ fontSize: 11.5, color: "var(--rj-muted)", textAlign: "center", margin: "10px 0 0" }}>토스페이먼츠 안전결제</p>
           </div>
         </div>
+        {buyOpen && (
+          <window.VodBuyModal
+            course={course}
+            user={user}
+            onClose={() => setBuyOpen(false)}
+            onPlay={async () => {
+              setBuyOpen(false);
+              const a = await window.resolveAccess(user, course); setAccess(a);
+              const sl = await window.vodFetchStudentLessons(course.id); setStudentLessons(sl);
+            }}
+          />
+        )}
       </div>
     );
   }

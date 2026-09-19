@@ -134,6 +134,7 @@ function CourseDetailPage({ courseId }) {
   const course = findCourse(courseId);
   const ins = course ? findInstructor(course.instructor) : null;
   const [tab, setTab] = useStateC("curriculum");
+  const [buyOpen, setBuyOpen] = useStateC(false);
   const owned = user && ACCOUNT.enrolled.includes(courseId);
   const inCart = cart.some((c) => c.courseId === courseId);
   const reviews = REVIEWS.filter((r) => r.courseId === courseId);
@@ -150,6 +151,18 @@ function CourseDetailPage({ courseId }) {
   // publicCourses()(courses-store.jsx)와 동일한 기준 — "실제 VOD 콘텐츠(쇼케이스/단일 영상/lessons)를
   // 가진 강좌인가"를 문자열(format 등) 판정 없이 실데이터로 판정한다. LIVE 데모 강좌는 셋 다 없어 false.
   const isVodCourse = !!(course.showcaseId || course.vimeoId || Number(course.lessons || 0) > 0);
+
+  // "다시보기 구매" — 실제 Toss 결제 흐름(VodBuyModal)으로 연결한다. 비로그인 시 기존
+  // rj-after-login 메커니즘(구독/체크아웃과 동일 패턴)으로 로그인 후 이 강좌로 되돌아온다.
+  const startBuy = () => {
+    if (!user) {
+      try { sessionStorage.setItem("rj-after-login", "#/courses/" + course.id); } catch (e) {}
+      showToast && showToast("결제하려면 먼저 회원가입/로그인이 필요합니다");
+      navigate("/signup");
+      return;
+    }
+    setBuyOpen(true);
+  };
 
   return (
     <div className="page-enter">
@@ -242,7 +255,7 @@ function CourseDetailPage({ courseId }) {
                   <button className="btn btn-ghost btn-lg" onClick={() => navigate("/subscribe")}>
                     <Icon name="star" size={16} /> 구독하기
                   </button>
-                  <button className="btn btn-primary btn-lg" onClick={() => navigate("/player/" + course.id)}>다시보기 구매 <Icon name="arrow" size={16} /></button>
+                  <button className="btn btn-primary btn-lg" onClick={startBuy}>다시보기 구매 <Icon name="arrow" size={16} /></button>
                 </>
               )}
             </div>
@@ -326,6 +339,14 @@ function CourseDetailPage({ courseId }) {
         </div>
       </section>
 
+      {buyOpen && (
+        <window.VodBuyModal
+          course={course}
+          user={user}
+          onClose={() => setBuyOpen(false)}
+          onPlay={() => { setBuyOpen(false); navigate("/player/" + course.id); }}
+        />
+      )}
     </div>
   );
 }
@@ -616,6 +637,96 @@ function PreviewModal({ onClose, course }) {
     </div>
   );
 }
+
+// ──────────────────────────────────────────────────────────────────
+// 개별 VOD 강좌 "다시보기 구매" 모달 — 기존 Toss 결제 파이프라인(app/toss-payments.jsx의
+// TossPayPanel/savePendingOrder, app/pages-checkout.jsx의 CheckoutPage 리다이렉트 처리,
+// Edge Function toss-confirm)을 그대로 재사용한다. 새 결제 인프라를 만들지 않는다.
+//   · 열리자마자 본인 enrollments 를 직접 조회(RLS의 enrollments_select_own 이 이미 허용)해
+//     이미 유효 구매가 있으면 결제 화면 대신 "강의 보기"로 안내하고 Toss 를 아예 열지 않는다
+//     (요청 전 UX 가드 — 실제 위변조 방지는 toss-confirm 서버 검증이 최종 방어선).
+//   · 실제 승인·enrollments 생성은 전부 서버(toss-confirm)가 하므로 이 모달은 demoBuyCourse 를
+//     호출하지 않는다. 결제 성공 후에는 Toss 가 항상 #/checkout 으로 복귀시키고, 그 화면의
+//     기존 CheckoutSuccess("바로 시청" → /player/:id)가 그대로 재사용된다.
+function VodBuyModal({ course, user, onClose, onPlay }) {
+  const [phase, setPhase] = useStateC("checking"); // checking | owned | pay
+
+  useEffectC(() => {
+    let alive = true;
+    (async () => {
+      const sb = window.getSupabase && window.getSupabase();
+      if (!sb || !user) { if (alive) setPhase("pay"); return; }
+      try {
+        const { data } = await sb
+          .from("enrollments")
+          .select("status, expires_at")
+          .eq("user_id", user.id)
+          .eq("course_id", course.id)
+          .eq("status", "active")
+          .maybeSingle();
+        if (!alive) return;
+        const valid = !!data && (!data.expires_at || new Date(data.expires_at) > new Date());
+        setPhase(valid ? "owned" : "pay");
+      } catch (e) { if (alive) setPhase("pay"); }
+    })();
+    return () => { alive = false; };
+  }, [course.id, user && user.id]);
+
+  const price = course.salePrice || course.recordingPrice || course.price || 0;
+  const saveOrder = ({ orderId }) => {
+    window.savePendingOrder && window.savePendingOrder({
+      type: "courses",
+      itemIds: [course.id],
+      total: price, orderId,
+      orderName: course.title,
+      info: { name: window.__rjUserName || "회원", email: (user && user.email) || "" },
+    });
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.55)",
+      display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(2px)",
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: "#fff", borderRadius: 18, width: "min(560px, 100%)", maxHeight: "90vh",
+        overflowY: "auto", padding: "28px 28px 24px", boxShadow: "0 24px 70px rgba(0,0,0,0.3)",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: "var(--rj-muted)", letterSpacing: "0.04em" }}>다시보기 구매</div>
+            <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: "-0.03em", marginTop: 4 }}>{course.title}</div>
+          </div>
+          <button onClick={onClose} aria-label="닫기" style={{ background: "transparent", border: 0, cursor: "pointer", padding: 6 }}><Icon name="close" size={20} /></button>
+        </div>
+        <div style={{ height: 1, background: "var(--rj-faint)", margin: "18px 0 22px" }} />
+
+        {phase === "checking" && (
+          <div style={{ padding: "40px 0", textAlign: "center", color: "var(--rj-muted)", fontSize: 14 }}>구매 여부를 확인하는 중…</div>
+        )}
+        {phase === "owned" && (
+          <div style={{ textAlign: "center", padding: "12px 0 4px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>이미 구매한 강의입니다</div>
+            <button className="btn btn-primary btn-lg" style={{ marginTop: 20 }} onClick={onPlay}>
+              <Icon name="play" size={14} /> 강의 보기
+            </button>
+          </div>
+        )}
+        {phase === "pay" && (
+          <window.TossPayPanel
+            amount={price}
+            orderName={course.title}
+            customer={{ name: window.__rjUserName || "", email: (user && user.email) || "" }}
+            user={user}
+            onBeforePay={saveOrder}
+            buttonLabel={(window.formatKRW ? window.formatKRW(price) : price.toLocaleString() + "원") + " 결제하기"}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+window.VodBuyModal = VodBuyModal;
 
 window.CoursesPage = CoursesPage;
 window.CourseDetailPage = CourseDetailPage;
