@@ -1,6 +1,6 @@
 /* global React, COURSES, INSTRUCTORS, SUBJECTS, REVIEWS, useApp, Icon, CoursePoster, CourseRowCard, SectionHead, findInstructor, findCourse, findSubject, formatKRW, ACCOUNT */
 
-const { useState: useStateC, useMemo: useMemoC } = React;
+const { useState: useStateC, useMemo: useMemoC, useEffect: useEffectC } = React;
 
 // ──────────────────────────────────────────────────────────────────
 // /courses — list with filters
@@ -315,7 +315,92 @@ function CourseDetailPage({ courseId }) {
   );
 }
 
+// 강좌 소개 페이지의 "커리큘럼" 탭 — 강좌 종류에 따라 셋 중 하나로 분기한다.
+//   A. lessons(실제 VOD 차시)가 있는 강좌 → VodLessonsCurriculum (공개 커리큘럼 RPC 기반)
+//   B. lessons는 없지만 기존 주차형 syllabus가 있는 강좌(LIVE) → LiveCurriculum (기존 그대로)
+//   C. 둘 다 없는 레거시(showcase 전용 등) → CurriculumComingSoon
+// "16주 커리큘럼" 같은 라이브 전용 문구는 A/C 어느 쪽에서도 노출되지 않는다.
 function Curriculum({ course, owned, onPlay }) {
+  const hasLessons = Number(course.lessons || 0) > 0;
+  if (hasLessons) return <VodLessonsCurriculum course={course} />;
+  if (course.syllabus && course.syllabus.length > 0) return <LiveCurriculum course={course} owned={owned} onPlay={onPlay} />;
+  return <CurriculumComingSoon />;
+}
+
+// 사람이 읽기 쉬운 길이 표기 — "9분 39초" / "47초"
+function formatDurationKo(sec) {
+  const s = Math.floor(Number(sec) || 0);
+  if (s <= 0) return "";
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}분 ${r}초` : `${r}초`;
+}
+
+// STEP: 강좌 상세페이지 커리큘럼 공개 — 실제 재생에 필요한 vimeo_id/hash 는 전혀 다루지 않는다.
+//   vod_get_course_curriculum(공개 RPC)는 order_index/title/duration_sec 만 반환하며,
+//   실제 재생 권한 검증(vod_get_student_lessons)은 PlayerPage 에서만 그대로 수행된다(이 컴포넌트는 관여 안 함).
+//   28/29/30차시처럼 같은 Vimeo 영상을 공유하는 차시도 RPC가 돌려준 lesson row 개수 그대로 표시한다
+//   (vimeo_id 를 애초에 받지 않으므로 동영상 기준 중복 제거를 할 방법도, 이유도 없다).
+function VodLessonsCurriculum({ course }) {
+  const [phase, setPhase] = useStateC("loading"); // loading | success | empty | error
+  const [items, setItems] = useStateC([]);
+
+  useEffectC(() => {
+    let alive = true;
+    setPhase("loading");
+    if (!window.vodFetchCourseCurriculum) { setPhase("error"); return; }
+    window.vodFetchCourseCurriculum(course.id).then((r) => {
+      if (!alive) return;
+      if (!r || !r.ok) { setPhase("error"); return; }
+      const lessons = (Array.isArray(r.lessons) ? r.lessons.slice() : [])
+        .sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
+      setItems(lessons);
+      setPhase(lessons.length ? "success" : "empty");
+    }).catch(() => { if (alive) setPhase("error"); });
+    return () => { alive = false; };
+  }, [course.id]);
+
+  return (
+    <div>
+      <div className="section-head" style={{ marginBottom: 8 }}>
+        <div>
+          <div className="eyebrow" style={{ color: "var(--rj-muted)" }}>Syllabus · 커리큘럼 · {course.lessons}차시</div>
+          <h2 style={{ marginTop: 10 }}>실제 강의 구성</h2>
+        </div>
+      </div>
+      <p style={{ color: "var(--rj-muted)", margin: "0 0 24px", maxWidth: 720 }}>
+        총 {course.lessons}개의 온라인 강의로 구성되어 있습니다.
+      </p>
+
+      {phase === "loading" && (
+        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--rj-muted)" }}>커리큘럼을 불러오는 중…</div>
+      )}
+      {phase === "error" && (
+        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--rj-muted)" }}>커리큘럼을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.</div>
+      )}
+      {phase === "empty" && (
+        <div style={{ padding: "48px 0", textAlign: "center", color: "var(--rj-muted)" }}>등록된 차시가 없습니다.</div>
+      )}
+      {phase === "success" && (
+        <div style={{ border: "1px solid var(--rj-line)", borderRadius: "var(--rj-r)" }}>
+          {items.map((l, i) => (
+            <div key={i} style={{
+              display: "flex", alignItems: "center", gap: 14, padding: "16px 24px",
+              borderTop: i === 0 ? "none" : "1px solid var(--rj-faint)",
+            }}>
+              <span className="num-en" style={{ fontSize: 12, letterSpacing: "0.14em", color: "var(--rj-muted)", fontWeight: 700, width: 64, flexShrink: 0 }}>{i + 1}차시</span>
+              <span style={{ flex: 1, fontFamily: "var(--font-kr-serif)", fontSize: 15, letterSpacing: "-0.01em" }}>{l.title}</span>
+              <span style={{ fontSize: 12.5, color: "var(--rj-muted)", flexShrink: 0 }}>{formatDurationKo(l.duration_sec)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// 기존 주차형(LIVE) 커리큘럼 — Curriculum 이 하던 일을 이름만 바꿔 그대로 옮김(로직/JSX 변경 없음).
+function LiveCurriculum({ course, owned, onPlay }) {
   const [open, setOpen] = useStateC(0);
   return (
     <div>
@@ -359,6 +444,16 @@ function Curriculum({ course, owned, onPlay }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// C. lessons=0 이고 syllabus=[] 인 레거시(showcase 전용 등) 강좌용 안전한 fallback
+function CurriculumComingSoon() {
+  return (
+    <div style={{ textAlign: "center", padding: "64px 24px", border: "1px dashed var(--rj-line)", borderRadius: "var(--rj-r)", color: "var(--rj-muted)" }}>
+      <div style={{ fontFamily: "var(--font-kr-serif)", fontSize: 20, color: "var(--rj-ink)" }}>커리큘럼 준비 중입니다.</div>
+      <p style={{ marginTop: 10, fontSize: 14 }}>차시 구성이 등록되면 이곳에 표시됩니다.</p>
     </div>
   );
 }

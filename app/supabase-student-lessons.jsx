@@ -21,4 +21,20 @@ async function vodFetchStudentLessons(courseId) {
   }
 }
 
-Object.assign(window, { vodFetchStudentLessons });
+// 강좌 상세페이지 커리큘럼 공개용 — 실제 재생정보(vimeo_id/vimeo_hash)는 절대 포함되지 않는다.
+//   vod_get_course_curriculum 은 구매/권한 검증을 하지 않는 별도 RPC 로, order_index/title/duration_sec
+//   만 돌려준다. 실제 시청 권한 판정은 여전히 vodFetchStudentLessons(위)/PlayerPage 가 전담한다.
+// 반환: { ok:true, lessons:[{order_index,title,duration_sec}] } | { ok:false, reason:'not-found'|'error' }
+async function vodFetchCourseCurriculum(courseId) {
+  const sb = window.getSupabase && window.getSupabase();
+  if (!sb) return { ok: false, reason: "error", lessons: [] };
+  try {
+    const { data, error } = await sb.rpc("vod_get_course_curriculum", { p_course_id: courseId });
+    if (error) return { ok: false, reason: "error", error: error.message, lessons: [] };
+    return data && typeof data === "object" ? data : { ok: false, reason: "error", lessons: [] };
+  } catch (e) {
+    return { ok: false, reason: "error", error: String(e), lessons: [] };
+  }
+}
+
+Object.assign(window, { vodFetchStudentLessons, vodFetchCourseCurriculum });
