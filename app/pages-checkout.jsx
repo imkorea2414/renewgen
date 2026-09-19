@@ -2,11 +2,13 @@
 
 const { useState: useStateK, useMemo: useMemoK, useEffect: useEffectK } = React;
 
-// 결제 성공 시 접근권 부여 (데모: localStorage / 실서버: Supabase enrollments)
+// 결제 성공 시 접근권 부여
+//   · 개별 강좌(course) 구매: toss-confirm(Edge Function)이 서버에서 이미 실제 enrollments 를
+//     생성했으므로 여기서 프론트가 추가로 할 일이 없다(과거의 demoBuyCourse 데모 우회는 제거됨).
+//   · 구독(subscribe): 이번 개별 VOD 구매 작업 범위가 아니므로 기존 demoSubscribe 그대로 유지.
 function grantOrderAccess(pending) {
   if (!pending) return;
   if (pending.type === "subscribe") { window.demoSubscribe && window.demoSubscribe(); return; }
-  (pending.itemIds || []).forEach((id) => { window.demoBuyCourse && window.demoBuyCourse(id); });
 }
 
 // ──────────────────────────────────────────────────────────────────
