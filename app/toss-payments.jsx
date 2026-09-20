@@ -230,17 +230,23 @@ function TossPayPanel({ amount, orderId, orderName, customer, user, onBeforePay,
   const inkBg = accentBg || "var(--rj-ink, #001D3D)";
   const inkFg = accentInk || "var(--rj-paper, #fff)";
 
+  // TOSS_CLIENT_KEY 가 "test_"로 시작할 때만 테스트 모드 안내를 보여준다 — 나중에 실제 상점의
+  // live_ 키로 전환하면 이 배너는 코드 수정 없이 자동으로 사라진다(결제 핵심 로직과는 무관한 표시 조건).
+  const isTestKey = String(window.TOSS_CLIENT_KEY || "").startsWith("test_");
+
   return (
     <div>
-      {/* 테스트 모드 배너 */}
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 10,
-        background: "rgba(43,111,219,0.08)", border: "1px solid rgba(43,111,219,0.25)",
-        fontSize: 12.5, color: "#1B4F9C", fontWeight: 600, marginBottom: 16,
-      }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2A6FDB", flexShrink: 0 }} />
-        토스페이먼츠 테스트 모드 — 실제로 결제·청구되지 않습니다. 테스트 카드로 결제 흐름을 확인하세요.
-      </div>
+      {/* 테스트 모드 배너 — test 키일 때만 표시 */}
+      {isTestKey && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 10,
+          background: "rgba(43,111,219,0.08)", border: "1px solid rgba(43,111,219,0.25)",
+          fontSize: 12.5, color: "#1B4F9C", fontWeight: 600, marginBottom: 16,
+        }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#2A6FDB", flexShrink: 0 }} />
+          토스페이먼츠 테스트 모드 — 실제로 결제·청구되지 않습니다. 테스트 카드로 결제 흐름을 확인하세요.
+        </div>
+      )}
 
       {status === "error" ? (
         <div style={{ padding: 24, borderRadius: 12, border: "1px solid var(--rj-faint, #e5e0d6)", textAlign: "center" }}>
@@ -276,8 +282,8 @@ function TossPayPanel({ amount, orderId, orderName, customer, user, onBeforePay,
         {status === "requesting" ? "결제창 여는 중…" : (buttonLabel || (window.formatKRW ? window.formatKRW(Math.round(amount)) + " 결제하기" : Math.round(amount).toLocaleString() + "원 결제하기"))}
       </button>
       <div style={{ marginTop: 12, fontSize: 11.5, color: "var(--rj-muted, #999)", textAlign: "center", lineHeight: 1.6 }}>
-        토스페이먼츠 안전결제 · 결제 정보는 암호화되어 전송됩니다.<br />
-        테스트 카드번호 예: <strong>4330-0000-0000-0005</strong> (유효기간·CVC·비밀번호는 아무 값)
+        토스페이먼츠 안전결제 · 결제 정보는 암호화되어 전송됩니다.
+        {isTestKey && (<><br />테스트 카드번호 예: <strong>4330-0000-0000-0005</strong> (유효기간·CVC·비밀번호는 아무 값)</>)}
       </div>
     </div>
   );
