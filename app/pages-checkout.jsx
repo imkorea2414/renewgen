@@ -11,6 +11,27 @@ function grantOrderAccess(pending) {
   if (pending.type === "subscribe") { window.demoSubscribe && window.demoSubscribe(); return; }
 }
 
+// Toss/서버(toss-confirm)가 돌려주는 code를 실제 결제 실패 화면에 그대로 노출하지 않고
+// 사용자 친화적인 한국어 문구로 바꾼다. 원본 code/message는 콘솔에만 남긴다(디버깅용).
+//   PAY_PROCESS_CANCELED/USER_CANCEL → 사용자가 직접 취소한 경우
+//   PRICE_MISMATCH/AMOUNT_MISMATCH   → 서버 가격 재검증 실패(내부 보안 로직, 상세 노출 안 함)
+//   COURSE_NOT_FOUND                 → 존재하지 않는 강좌
+//   그 외(UNAUTHORIZED_KEY, CONFIRM_FAILED, PRICE_LOOKUP_FAILED 등) → 일반 실패 문구
+function tossFriendlyErrorMessage(code) {
+  switch (code) {
+    case "PAY_PROCESS_CANCELED":
+    case "USER_CANCEL":
+      return "결제가 취소되었습니다.";
+    case "PRICE_MISMATCH":
+    case "AMOUNT_MISMATCH":
+      return "결제 정보를 확인할 수 없습니다. 다시 시도해 주세요.";
+    case "COURSE_NOT_FOUND":
+      return "강의 정보를 확인할 수 없습니다.";
+    default:
+      return "결제 과정에서 문제가 발생했습니다. 결제 내역을 확인한 후 다시 시도해 주세요.";
+  }
+}
+
 // ──────────────────────────────────────────────────────────────────
 // /cart
 // ──────────────────────────────────────────────────────────────────
@@ -146,7 +167,11 @@ function CheckoutPage() {
     if (!rd) return;
     window.clearTossRedirect && window.clearTossRedirect();
     const pending = window.readPendingOrder && window.readPendingOrder();
-    if (rd.kind === "fail") { setRedir({ phase: "fail", message: rd.message, code: rd.code, pending }); return; }
+    if (rd.kind === "fail") {
+      console.warn("[Toss] 결제 취소/실패 — code:", rd.code, "message:", rd.message); // 디버깅용, 화면에는 노출 안 함
+      setRedir({ phase: "fail", message: rd.message, code: rd.code, pending });
+      return;
+    }
     setRedir({ phase: "confirming", pending });
     (async () => {
       const r = await window.confirmTossPayment({ paymentKey: rd.paymentKey, orderId: rd.orderId, amount: rd.amount });
@@ -154,8 +179,13 @@ function CheckoutPage() {
         grantOrderAccess(pending);
         window.clearPendingOrder && window.clearPendingOrder();
         try { clearCart(); } catch (e) {}
-        setRedir({ phase: "done", pending, orderId: rd.orderId, amount: Number(rd.amount) });
+        // toss-confirm이 이미 구매한 강좌라 Toss 승인 자체를 생략한 경우(ok:true, payment.status
+        // 'ALREADY_ENROLLED') — 기존 서버 설계(ok:true로 성공 화면 재사용)는 그대로 두고, 프론트에서만
+        // 이 값을 읽어 "결제 완료"가 아니라 "이미 구매한 강의" 안내로 구분해서 보여준다.
+        const alreadyEnrolled = !!(r.payment && r.payment.status === "ALREADY_ENROLLED");
+        setRedir({ phase: "done", pending, orderId: rd.orderId, amount: Number(rd.amount), alreadyEnrolled });
       } else {
+        console.warn("[Toss] 결제 승인 실패 — code:", r.code, "message:", r.error); // 디버깅용, 화면에는 노출 안 함
         setRedir({ phase: "fail", message: r.error || "결제 승인에 실패했습니다", code: r.code, pending });
       }
     })();
@@ -196,9 +226,24 @@ function CheckoutPage() {
           {redir.phase === "done" && (
             pend.type === "subscribe"
               ? <SubscribeSuccess orderId={redir.orderId} total={rTotal} info={rInfo} tier={pend.tier} onGoMyPage={() => navigate("/mypage?tab=recordings")} onGoHome={() => navigate("/")} />
-              : <CheckoutSuccess orderId={redir.orderId} items={rItems} total={rTotal} info={rInfo} onGoMyPage={() => navigate("/mypage")} onGoCourses={() => navigate("/courses")} onPlay={(id) => navigate("/player/" + id)} />
+              : <CheckoutSuccess orderId={redir.orderId} items={rItems} total={rTotal} info={rInfo} alreadyEnrolled={redir.alreadyEnrolled} onGoMyPage={() => navigate("/mypage")} onGoCourses={() => navigate("/courses")} onPlay={(id) => navigate("/player/" + id)} />
           )}
-          {redir.phase === "fail" && <CheckoutFail message={redir.message} code={redir.code} onRetry={() => { setRedir(null); navigate("/cart"); }} onHome={() => { setRedir(null); navigate("/"); }} />}
+          {redir.phase === "fail" && (
+            <CheckoutFail
+              code={redir.code}
+              onRetry={() => {
+                setRedir(null);
+                // 실패 전 어떤 결제를 시도했는지(pend)를 기준으로 자연스러운 화면으로 복귀시킨다.
+                //   · 구독 → /subscribe   · 강좌 1개(개별 VOD 구매) → 그 강좌 상세페이지
+                //   · 그 외(장바구니 다중구매 등, 기존 동작 그대로) → /cart
+                const itemIds = pend.itemIds || [];
+                if (pend.type === "subscribe") { navigate("/subscribe"); return; }
+                if (itemIds.length === 1) { navigate("/courses/" + itemIds[0]); return; }
+                navigate("/cart");
+              }}
+              onGoCourses={() => { setRedir(null); navigate("/courses"); }}
+            />
+          )}
         </section>
       </div>
     );
@@ -260,19 +305,20 @@ function ConfirmingView() {
   );
 }
 
-// 결제 실패 화면
-function CheckoutFail({ message, code, onRetry, onHome }) {
+// 결제 실패 화면 — 서버/Toss의 code는 화면에 노출하지 않고 사용자 친화적 문구로만 안내한다
+// (원본 code/message는 이미 호출부(CheckoutPage)에서 console.warn으로 남김).
+function CheckoutFail({ code, onRetry, onGoCourses }) {
+  const friendly = tossFriendlyErrorMessage(code);
   return (
     <div style={{ maxWidth: 560 }}>
       <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(192,57,43,0.1)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
         <Icon name="close" size={28} />
       </div>
       <h2 style={{ fontFamily: "var(--font-kr-serif)", fontWeight: 500, fontSize: 32, letterSpacing: "-0.025em", marginTop: 20 }}>결제를 완료하지 못했습니다</h2>
-      <p className="body-lg" style={{ color: "var(--rj-muted)", marginTop: 12 }}>{message || "결제가 취소되거나 승인되지 않았습니다."}</p>
-      {code && <div className="num-en" style={{ marginTop: 8, fontSize: 12, color: "var(--rj-muted)" }}>code: {code}</div>}
+      <p className="body-lg" style={{ color: "var(--rj-muted)", marginTop: 12 }}>{friendly}</p>
       <div style={{ display: "flex", gap: 10, marginTop: 28 }}>
         <button className="btn btn-primary btn-lg" onClick={onRetry}>다시 시도 <Icon name="arrow" size={14} /></button>
-        <button className="btn btn-ghost btn-lg" onClick={onHome}>홈으로</button>
+        <button className="btn btn-ghost btn-lg" onClick={onGoCourses}>강의 목록으로</button>
       </div>
     </div>
   );
@@ -452,7 +498,44 @@ function OrderSummary({ items, subtotal, bundle, total }) {
   );
 }
 
-function CheckoutSuccess({ orderId, items, total, info, onGoMyPage, onGoCourses, onPlay }) {
+// 강좌 1개 결제(장바구니 1개 또는 개별 VOD "다시보기 구매")는 목표 UX대로 간단한 요약 화면을 보여준다.
+// 이미 구매한 강좌라 toss-confirm이 승인을 생략한 경우(alreadyEnrolled)는 "결제 완료"가 아니라
+// "이미 구매한 강의"로 안내하고 결제금액 줄은 표시하지 않는다(실제로 이번에 청구된 금액이 없으므로).
+// 장바구니 2개 이상 다중 구매는 기존 레이아웃을 그대로 유지한다(아래 else 분기, 무변경).
+function CheckoutSuccess({ orderId, items, total, info, alreadyEnrolled, onGoMyPage, onGoCourses, onPlay }) {
+  if (items.length === 1) {
+    const c = items[0];
+    return (
+      <div style={{ maxWidth: 560 }}>
+        <div style={{ width: 72, height: 72, borderRadius: "50%", background: "var(--rj-accent)", display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+          <Icon name="check" size={32} strokeWidth={2} />
+        </div>
+        <h2 style={{ fontFamily: "var(--font-kr-serif)", fontWeight: 500, fontSize: 40, letterSpacing: "-0.03em", marginTop: 24, lineHeight: 1.15 }}>
+          {alreadyEnrolled ? "이미 구매한 강의입니다." : "결제가 완료되었습니다."}
+        </h2>
+        {!alreadyEnrolled && (
+          <p className="body-lg" style={{ color: "var(--rj-muted)", marginTop: 12 }}>
+            영수증을 <strong style={{ color: "var(--rj-ink)" }}>{info.email}</strong>으로 발송했습니다.
+          </p>
+        )}
+        <div className="card" style={{ padding: 24, marginTop: 28 }}>
+          <div className="label-cap" style={{ color: "var(--rj-muted)" }}>구매한 강의</div>
+          <div style={{ fontSize: 20, fontWeight: 700, marginTop: 6 }}>{c.title}</div>
+          {!alreadyEnrolled && (
+            <>
+              <div style={{ height: 1, background: "var(--rj-faint)", margin: "16px 0" }} />
+              <div className="label-cap" style={{ color: "var(--rj-muted)" }}>결제금액</div>
+              <div className="num-en" style={{ fontSize: 24, fontWeight: 700, marginTop: 6 }}>{formatKRW(total)}</div>
+            </>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
+          <button className="btn btn-primary btn-lg" onClick={() => onPlay(c.id)}><Icon name="play" size={14} /> 바로 시청</button>
+          <button className="btn btn-ghost btn-lg" onClick={onGoCourses}>강의 목록으로</button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 420px", gap: 56 }}>
       <div>
