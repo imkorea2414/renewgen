@@ -46,10 +46,9 @@ async function isSubscriber(user) {
   } catch (e) { return false; }
 }
 
-// 특정 강의(녹화본)를 구매했는가?
+// 특정 강의(녹화본)를 구매했는가? — 실제 Supabase enrollments만 신뢰한다(A2-A: localStorage 데모 구매 우회 제거).
 async function hasPurchased(user, courseId) {
   if (!user) return false;
-  if (demoState().courses.includes(courseId)) return true; // 시연용 데모 구매
   const sb = window.getSupabase && window.getSupabase();
   if (!sb) return false;
   try {
@@ -110,12 +109,12 @@ async function resolveAccess(user, course) {
   return { canWatch: false, reason: "locked" };
 }
 
-// 데모 구매/구독 (결제 붙기 전 시연용)
+// 데모 구독 (결제 붙기 전 시연용 — subscriptions 서버 저장 구조가 아직 없어 유지)
+//   A2-A: 구매(demoBuyCourse)는 실제 호출부가 없고 hasPurchased()도 더 이상 참조하지 않아 제거함.
 function demoSubscribe() { const s = demoState(); s.sub = true; saveDemoState(s); }
-function demoBuyCourse(courseId) { const s = demoState(); if (!s.courses.includes(courseId)) s.courses.push(courseId); saveDemoState(s); }
 function demoReset() { saveDemoState({ sub: false, courses: [] }); }
 
 Object.assign(window, {
   isSubscriber, hasPurchased, resolveAccess, isFreepass, rosterGrant,
-  demoSubscribe, demoBuyCourse, demoReset, demoAccessState: demoState,
+  demoSubscribe, demoReset, demoAccessState: demoState,
 });
