@@ -264,7 +264,7 @@ function DataSubMonitor() {
           who: r.student_name || r.student_uid || "",
         }));
         if (alive) setSt({ types, log, total: rows.length });
-      } catch (e) { if (alive) setSt({ types: [], log: [], total: 0, error: String(e && e.message || e) }); }
+      } catch (e) { console.warn("[Admin] 데이터 구독 모니터 조회 실패:", e); if (alive) setSt({ types: [], log: [], total: 0, error: "데이터를 불러오지 못했습니다." }); }
     })();
     return () => { alive = false; };
   }, []);
@@ -361,7 +361,7 @@ function RoleManager({ me }) {
     window.setUserRole(e, role); refresh(); setEmail("");
     if (window.SUPABASE_ENABLED && window.setProfileRoleByEmail) {
       const r = await window.setProfileRoleByEmail(e, role);
-      if (!r.ok) { showToast(r.notFound ? `${e} 회원을 찾을 수 없습니다 (로컬만 적용 — 가입 후 다시 시도)` : "DB 반영 실패 (로컬만 적용)"); return; }
+      if (!r.ok) { showToast(r.notFound ? `${e} 회원을 찾을 수 없습니다 (로컬만 적용 — 가입 후 다시 시도)` : "변경사항을 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."); return; }
       loadMembers();
     }
     showToast(`${e} → ${roleKo(role)} 권한 부여`);

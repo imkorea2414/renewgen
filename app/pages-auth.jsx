@@ -2,6 +2,23 @@
 
 const { useState: useStateA } = React;
 
+// Supabase Auth가 돌려주는 원문(영문/기술 용어)을 사용자 친화적 한국어로 바꾼다.
+// 원문은 콘솔에만 남기고(디버깅용), 화면에는 아래 매핑된 문구만 노출한다.
+// 알 수 없는 원문은 뭉개지 않고 "로그인/가입에 실패했습니다" 같은 상황+행동 안내로 대체한다.
+function authFriendlyErrorMessage(raw, kind) {
+  const s = String(raw || "");
+  if (!s) return kind === "signup" ? "가입에 실패했습니다. 잠시 후 다시 시도해 주세요." : "로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+  if (/invalid login credentials/i.test(s)) return "이메일 또는 비밀번호가 올바르지 않습니다.";
+  if (/email not confirmed/i.test(s)) return "이메일 인증이 필요합니다. 받으신 확인 메일을 먼저 확인해 주세요.";
+  if (/already registered|already exists|user already/i.test(s)) return "이미 가입된 이메일입니다.";
+  if (/password should be at least|password.*character/i.test(s)) return "비밀번호는 8자 이상으로 입력해 주세요.";
+  if (/unable to validate email|invalid email/i.test(s)) return "이메일 형식을 확인해 주세요.";
+  if (/rate limit|too many requests/i.test(s)) return "잠시 후 다시 시도해 주세요.";
+  if (/failed to fetch|network|timeout/i.test(s)) return "일시적으로 연결이 원활하지 않습니다. 잠시 후 다시 시도해 주세요.";
+  return kind === "signup" ? "가입에 실패했습니다. 잠시 후 다시 시도해 주세요." : "로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.";
+}
+window.authFriendlyErrorMessage = authFriendlyErrorMessage;
+
 function LoginPage() {
   const { navigate, login, signIn, showToast } = useApp();
   const [email, setEmail] = useStateA("");
@@ -9,9 +26,9 @@ function LoginPage() {
   const [busy, setBusy] = useStateA(false);
 
   const google = async () => {
-    if (!window.SUPABASE_ENABLED) { showToast("구글 로그인은 Supabase 연결 후 작동합니다"); return; }
+    if (!window.SUPABASE_ENABLED) { showToast("잠시 후 다시 시도해 주세요."); return; }
     const r = await window.signInWithGoogle();
-    if (!r.ok) showToast(r.error || "구글 로그인을 시작할 수 없습니다");
+    if (!r.ok) { console.warn("[Auth] Google 로그인 실패:", r.error); showToast(authFriendlyErrorMessage(r.error, "login")); }
   };
 
   const submit = async (e) => {
@@ -20,7 +37,7 @@ function LoginPage() {
     setBusy(true);
     const res = await signIn(email, password);
     setBusy(false);
-    if (!res.ok) { showToast(res.error === "Invalid login credentials" ? "이메일 또는 비밀번호가 올바르지 않습니다" : (res.error || "로그인에 실패했습니다")); return; }
+    if (!res.ok) { console.warn("[Auth] 로그인 실패:", res.error); showToast(authFriendlyErrorMessage(res.error, "login")); return; }
     // 클래스인 미연결 사용자라면 이참에 연결 (한 번만 시도 후 캐시)
     try { if (window.classinSyncSelf) window.classinSyncSelf({}); } catch (e) {}
     let dest = "/mypage";
@@ -62,7 +79,7 @@ function LoginPage() {
             </div>
           </div>
           <div className="card" style={{ background: "transparent", border: "1px solid rgba(245,241,233,0.18)", color: "var(--rj-paper)", padding: 24 }}>
-            <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>Supabase 연동</div>
+            <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>회원 로그인</div>
             <p style={{ marginTop: 10, color: "rgba(245,241,233,0.7)", fontSize: 13, marginBottom: 0, lineHeight: 1.6 }}>
               실제 계정으로 로그인됩니다. 계정이 없으시면 먼저 <a href="#/signup" style={{ color: "var(--rj-accent)" }}>회원가입</a> 해주세요.
             </p>
@@ -138,9 +155,9 @@ function SignupPage() {
   const isTeacher = data.role === "teacher";
 
   const google = async () => {
-    if (!window.SUPABASE_ENABLED) { showToast("구글 로그인은 Supabase 연결 후 작동합니다"); return; }
+    if (!window.SUPABASE_ENABLED) { showToast("잠시 후 다시 시도해 주세요."); return; }
     const r = await window.signInWithGoogle();
-    if (!r.ok) showToast(r.error || "구글 로그인을 시작할 수 없습니다");
+    if (!r.ok) { console.warn("[Auth] Google 가입 실패:", r.error); showToast(authFriendlyErrorMessage(r.error, "signup")); }
   };
 
   const next = () => {
@@ -169,7 +186,8 @@ function SignupPage() {
     });
     setBusy(false);
     if (!res.ok) {
-      showToast(res.error && res.error.includes("already") ? "이미 가입된 이메일입니다" : (res.error || "가입에 실패했습니다"));
+      console.warn("[Auth] 회원가입 실패:", res.error);
+      showToast(authFriendlyErrorMessage(res.error, "signup"));
       return;
     }
     if (res.needsConfirm) {

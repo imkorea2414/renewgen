@@ -43,9 +43,15 @@ async function vimeoListCall(qs) {
       headers: { Authorization: "Bearer " + bearer, apikey: window.SUPABASE_ANON_KEY || "" },
     });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok || json.ok === false) return { ok: false, msg: json.msg || ("HTTP " + res.status) };
+    if (!res.ok || json.ok === false) {
+      console.warn("[Vimeo] 목록 조회 실패 — status:", res.status, "msg:", json.msg); // 디버깅용, 화면에는 노출 안 함
+      return { ok: false, msg: "영상 목록을 불러오지 못했습니다." };
+    }
     return json;
-  } catch (e) { return { ok: false, msg: "네트워크 오류: " + String(e) }; }
+  } catch (e) {
+    console.warn("[Vimeo] 목록 조회 네트워크 오류:", e); // 디버깅용, 화면에는 노출 안 함
+    return { ok: false, msg: "일시적으로 연결이 원활하지 않습니다. 잠시 후 다시 시도해 주세요." };
+  }
 }
 
 function vodDurationLabel(sec) {
@@ -857,7 +863,7 @@ function LessonsManagePanel({ course, onClose, showToast }) {
     window.vodFetchLessons(course.id).then((r) => {
       if (!alive) return;
       setLoading(false);
-      if (!r.ok) { setErr(r.error || "차시를 불러오지 못했습니다"); return; }
+      if (!r.ok) { console.warn("[VOD] 차시 조회 실패:", r.error); setErr("차시를 불러오지 못했습니다."); return; }
       setLessons((r.lessons || []).map((row) => ({
         title: row.title || "",
         vimeo_id: row.vimeo_id || "",
@@ -874,7 +880,7 @@ function LessonsManagePanel({ course, onClose, showToast }) {
     setSaving(true);
     const r = await window.vodReplaceCourseLessons(course.id, lessonsToPayload(lessons), null);
     setSaving(false);
-    if (!r.ok) { alert("차시 저장 실패: " + (r.error || "알 수 없는 오류")); return; }
+    if (!r.ok) { console.warn("[VOD] 차시 저장 실패:", r.error); alert("차시를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."); return; }
     // site_store/window.COURSES 의 lessons 개수도 함께 동기화 — 학생 목록 노출 필터(publicCourses 등)가 이 값을 기준으로 하기 때문.
     window.setCourseOverride(course.id, { lessons: lessons.length });
     showToast("차시가 저장되었습니다");
@@ -956,7 +962,7 @@ function VodAddForm({ onClose, onAdded }) {
 
     const r = await window.vodCreateCourseWithLessons(courseRow, lessonsToPayload(lessons), siteCourse);
     setSaving(false);
-    if (!r.ok) { alert("강좌 저장 실패: " + (r.error || "알 수 없는 오류")); return; }
+    if (!r.ok) { console.warn("[VOD] 강좌 저장 실패:", r.error); alert("강좌를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요."); return; }
 
     // vod_create_course_with_lessons(STEP3, 수정하지 않음)는 courses.class_names 컬럼을 알지 못하므로
     // (STEP4에서 새로 추가된 컬럼) 개설 시 지정한 "무료 대상 반"을 별도로 한 번 더 동기화한다.

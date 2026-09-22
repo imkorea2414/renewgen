@@ -39,8 +39,9 @@ function OmrEditor({ examId, onClose }) {
           showToast && showToast("시험지 PDF 업로드 완료 (Supabase Storage)");
           return;
         }
-        showToast && showToast("Storage 업로드 실패(" + (error.message || "") + ") — 로컬로 저장합니다");
-      } catch (e) { showToast && showToast("업로드 오류 — 로컬로 저장합니다"); }
+        console.warn("[Exam] PDF 업로드 실패:", error.message); // 디버깅용, 화면에는 노출 안 함
+        showToast && showToast("파일을 업로드하지 못했습니다 — 로컬로 저장합니다");
+      } catch (e) { console.warn("[Exam] PDF 업로드 오류:", e); showToast && showToast("파일을 업로드하지 못했습니다 — 로컬로 저장합니다"); }
       setUploading(false);
     }
     // 폴백(데모/미연결): data URL 로 로컬 저장
