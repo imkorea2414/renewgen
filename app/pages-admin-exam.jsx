@@ -47,7 +47,7 @@ function ExamManager() {
         <span className="ci-badge warn"><Icon name="clock" size={11} /> 서술형 채점 대기 {pendGrade}</span>
         <button className="ci-act sm" onClick={() => showToast && showToast("CSV 양식: 유형,문항,보기1~5,정답,배점,단원,해설 — 업로드 시 일괄 등록(데모)")}><Icon name="upload" size={11} /> CSV 문제은행 업로드</button>
         {window.examSbStatus && (window.examSbStatus() === "connected"
-          ? <span className="ci-badge ok"><Icon name="check" size={11} /> Supabase 연결됨</span>
+          ? <span className="ci-badge ok"><Icon name="check" size={11} /> 서버 저장됨</span>
           : <span className="ci-badge neutral"><Icon name="server" size={11} /> 로컬 저장(데모)</span>)}
       </div>
 

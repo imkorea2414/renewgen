@@ -185,7 +185,8 @@ function TossPayPanel({ amount, orderId, orderName, customer, user, onBeforePay,
         setStatus("ready");
       } catch (e) {
         if (!alive) return;
-        setErr(String((e && e.message) || e));
+        console.warn("[Toss] 결제 위젯 초기화 실패:", e); // 디버깅용, 화면에는 노출 안 함
+        setErr("잠시 후 다시 시도해 주세요.");
         setStatus("error");
       }
     })();
@@ -222,7 +223,7 @@ function TossPayPanel({ amount, orderId, orderName, customer, user, onBeforePay,
       // 사용자가 취소(USER_CANCEL)하거나 검증 실패한 경우
       setStatus("ready");
       if (e && e.code && e.code !== "USER_CANCEL" && e.code !== "PAY_PROCESS_CANCELED") {
-        setErr((e.message || e.code) + "");
+        console.warn("[Toss] 결제창 요청 실패 — code:", e.code, "message:", e.message); // 디버깅용, 화면에는 노출 안 함
       }
     }
   };

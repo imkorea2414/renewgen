@@ -559,28 +559,14 @@ function LiveSchedule() {
 }
 
 function LiveEntry({ course }) {
-  const { navigate, route } = useApp();
+  const { navigate, route, user } = useApp();
   // Support ?join=1 query — skip preflight and jump straight into the room
   const wantsJoin = route?.params?.get?.("join") === "1";
   const [phase, setPhase] = useStateP(wantsJoin ? "live" : "preflight"); // preflight | live
-  const [countdown, setCountdown] = useStateP({ m: 0, s: 12 });
   const [mic, setMic] = useStateP(true);
   const [cam, setCam] = useStateP(false);
   const ins = findInstructor(course.instructor);
   const [joining, setJoining] = useStateP(false);
-
-  useEffectP(() => {
-    if (phase !== "preflight") return;
-    const t = setInterval(() => {
-      setCountdown((c) => {
-        let s = c.s - 1, m = c.m;
-        if (s < 0) { s = 59; m -= 1; }
-        if (m < 0) { m = 0; s = 0; }
-        return { m, s };
-      });
-    }, 1000);
-    return () => clearInterval(t);
-  }, [phase]);
 
   // 실제 라이브 강의실 — 사이트 안에서 구동
   if (phase === "live") {
@@ -608,7 +594,7 @@ function LiveEntry({ course }) {
                   <div className="dot-grid" style={{ position: "absolute", inset: 0, opacity: 0.1 }} />
                   {cam ? (
                     <>
-                      <span className="avatar avatar-xl" style={{ background: "rgba(245,241,233,0.1)", color: "var(--rj-paper)", border: "1px solid rgba(245,241,233,0.18)" }}>도윤</span>
+                      <span className="avatar avatar-xl" style={{ background: "rgba(245,241,233,0.1)", color: "var(--rj-paper)", border: "1px solid rgba(245,241,233,0.18)" }}>{((user && user.name) || "나").slice(0, 1)}</span>
                       <div style={{ fontSize: 13, color: "rgba(245,241,233,0.7)" }}>카메라 활성 — 좌우 반전 미리보기</div>
                     </>
                   ) : (
@@ -631,22 +617,18 @@ function LiveEntry({ course }) {
                   </button>
                 </div>
 
-                <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid rgba(245,241,233,0.1)", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, fontSize: 13 }}>
+                <div style={{ marginTop: 20, paddingTop: 20, borderTop: "1px solid rgba(245,241,233,0.1)", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, fontSize: 13 }}>
                   <div>
                     <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>Microphone</div>
-                    <div style={{ marginTop: 4 }}>MacBook Pro 마이크</div>
+                    <div style={{ marginTop: 4 }}>{mic ? "마이크 켜짐" : "마이크 꺼짐"}</div>
                   </div>
                   <div>
                     <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>Camera</div>
-                    <div style={{ marginTop: 4 }}>FaceTime HD</div>
+                    <div style={{ marginTop: 4 }}>{cam ? "카메라 켜짐" : "카메라 꺼짐"}</div>
                   </div>
                   <div>
                     <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>Network</div>
-                    <div style={{ marginTop: 4, color: "#7BCB8C" }}>● 양호 (124 Mbps)</div>
-                  </div>
-                  <div>
-                    <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>Latency</div>
-                    <div style={{ marginTop: 4 }}><span className="num-en">28</span> ms</div>
+                    <div style={{ marginTop: 4, color: "#7BCB8C" }}>● 연결됨</div>
                   </div>
                 </div>
               </div>
@@ -663,11 +645,8 @@ function LiveEntry({ course }) {
                 <div style={{ fontSize: 14, color: "rgba(245,241,233,0.7)", marginTop: 6 }}>{ins?.name} · {course.level}</div>
 
                 <div style={{ marginTop: 24, padding: 20, background: "rgba(251,244,189,0.08)", borderRadius: "var(--rj-r-sm)", border: "1px solid rgba(251,244,189,0.2)" }}>
-                  <div className="label-cap" style={{ color: "rgba(251,244,189,0.7)" }}>STARTS IN · 라이브 시작까지</div>
-                  <div className="num-en" style={{ fontSize: 52, fontWeight: 600, letterSpacing: "-0.03em", marginTop: 8, color: "var(--rj-accent)" }}>
-                    {String(countdown.m).padStart(2, "0")}:{String(countdown.s).padStart(2, "0")}
-                  </div>
-                  <div style={{ fontSize: 13, color: "rgba(245,241,233,0.7)", marginTop: 4 }}>5월 22일 (목) 20:00 — 1주차 OT</div>
+                  <div className="label-cap" style={{ color: "rgba(251,244,189,0.7)" }}>곧 입장할 수 있습니다</div>
+                  <div style={{ fontSize: 13, color: "rgba(245,241,233,0.7)", marginTop: 8 }}>정확한 라이브 일정은 강의 소개 페이지에서 확인해주세요.</div>
                 </div>
 
                 <ul style={{ marginTop: 24, padding: 0, listStyle: "none", display: "grid", gap: 10, fontSize: 13, color: "rgba(245,241,233,0.85)" }}>
@@ -698,19 +677,6 @@ function LiveEntry({ course }) {
                 </button>
                 <div style={{ marginTop: 12, fontSize: 11, color: "rgba(245,241,233,0.5)", textAlign: "center", fontFamily: "var(--font-en)", letterSpacing: "0.12em", textTransform: "uppercase" }}>
                   Renewjen Live Classroom · 자체 운영
-                </div>
-              </div>
-
-              <div style={{ marginTop: 16, padding: 20, border: "1px solid rgba(245,241,233,0.15)", borderRadius: "var(--rj-r)", color: "var(--rj-paper)" }}>
-                <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)" }}>Attendees · 함께 수강 중</div>
-                <div style={{ display: "flex", marginTop: 10, alignItems: "center" }}>
-                  {["지원", "민재", "수아", "현우", "은비"].map((n, i) => (
-                    <span key={n} className="avatar avatar-sm" style={{
-                      background: "rgba(245,241,233,0.1)", color: "var(--rj-paper)",
-                      border: "1px solid rgba(10,10,10,1)", marginLeft: i === 0 ? 0 : -10,
-                    }}>{n.slice(0, 1)}</span>
-                  ))}
-                  <span style={{ marginLeft: 12, fontSize: 12, color: "rgba(245,241,233,0.7)" }}>+ <span className="num-en">187</span>명 대기 중</span>
                 </div>
               </div>
             </div>

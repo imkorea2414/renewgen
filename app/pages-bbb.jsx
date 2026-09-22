@@ -13,7 +13,10 @@ async function bbbCall(qs) {
   try {
     const res = await fetch(base + qs, { headers: { Authorization: "Bearer " + bearer, apikey: window.SUPABASE_ANON_KEY || "" } });
     return await res.json();
-  } catch (e) { return { ok: false, msg: "네트워크 오류: " + String(e) }; }
+  } catch (e) {
+    console.warn("[BBB] 요청 실패:", e); // 디버깅용, 화면에는 노출 안 함
+    return { ok: false, msg: "일시적으로 연결이 원활하지 않습니다. 잠시 후 다시 시도해 주세요." };
+  }
 }
 
 function BBBLivePage() {
@@ -25,7 +28,10 @@ function BBBLivePage() {
   const isStaff = !!(window.isStaff && window.isStaff(user));
 
   const load = React.useCallback(() => {
-    bbbCall("?action=list").then((r) => { setRooms(r.ok ? r.rooms : []); if (!r.ok) setErr(r.msg || ""); });
+    bbbCall("?action=list").then((r) => {
+      setRooms(r.ok ? r.rooms : []);
+      if (!r.ok) { console.warn("[BBB] 강의실 목록 조회 실패:", r.msg); setErr("강의실 목록을 불러오지 못했습니다."); }
+    });
   }, []);
   React.useEffect(() => { if (user) load(); }, [user, load]);
 
@@ -67,13 +73,13 @@ function BBBLivePage() {
     setBusy(true); setErr("");
     const r = await bbbCall("?action=create&name=" + encodeURIComponent(name));
     setBusy(false);
-    if (r.ok) { openRoom(r.joinUrl); load(); } else setErr(r.msg || "개설 실패");
+    if (r.ok) { openRoom(r.joinUrl); load(); } else { console.warn("[BBB] 강의실 개설 실패:", r.msg); setErr("강의실을 개설하지 못했습니다. 잠시 후 다시 시도해 주세요."); }
   };
   const join = async (id) => {
     setBusy(true); setErr("");
     const r = await bbbCall("?action=join&id=" + encodeURIComponent(id));
     setBusy(false);
-    if (r.ok) openRoom(r.joinUrl); else setErr(r.msg || "입장 실패");
+    if (r.ok) openRoom(r.joinUrl); else { console.warn("[BBB] 강의실 입장 실패:", r.msg); setErr("실시간 수업에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요."); }
   };
   const end = async (id) => {
     if (!window.confirm("이 강의실을 종료할까요?")) return;

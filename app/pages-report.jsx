@@ -283,7 +283,7 @@ function RCAiButton({ st, ctx, onComment }) {
       const txt = await rcGenerateAIComment(st, ctx);
       if (txt) onComment(txt);
       else setErr("응답이 비어 있습니다");
-    } catch (e) { setErr(String((e && e.message) || e)); }
+    } catch (e) { console.warn("[Report] AI 코멘트 생성 실패:", e); setErr("AI 코멘트를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요."); }
     setBusy(false);
   };
   if (!available) {
@@ -562,7 +562,8 @@ function ClassInImportModal({ defaultLabel, onClose, onImport }) {
       setSel(next);
       setPhase("list");
     } catch (e) {
-      setErr(String((e && e.message) || e));
+      console.warn("[Report] 클래스인 시험 목록 조회 실패:", e); // 디버깅용, 화면에는 노출 안 함
+      setErr("클래스인 성적 정보를 불러오지 못했습니다.");
       setPhase("error");
     }
   }, []);
@@ -584,7 +585,8 @@ function ClassInImportModal({ defaultLabel, onClose, onImport }) {
       onImport(round, `클래스인에서 ${rows.length}건(시험 ${selectedIds.length}개)을 불러왔습니다`);
       onClose();
     } catch (e) {
-      setErr(String((e && e.message) || e));
+      console.warn("[Report] 클래스인 성적 가져오기 실패:", e); // 디버깅용, 화면에는 노출 안 함
+      setErr("성적 정보를 불러오지 못했습니다.");
       setPhase("error");
     }
   };
