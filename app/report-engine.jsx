@@ -19,6 +19,25 @@ const RJ_SUBJECTS = [
 ];
 const RJ_SUBJECT_KEYS = ["국어", "영어", "수학", "사회", "과학", "한국사", "역사", "도덕", "통합사회", "통합과학"];
 
+// 과목 ID(레벨 접두사·괄호 설명이 붙어 있을 수 있음, 예: "중A 사회 (중2-1)") 안에서
+// 표준 과목명을 부분 문자열로 탐지 — 정확히 일치하지 않아도 정렬/색상이 깨지지 않도록 함.
+function rjCanonicalSubject(subjectName) {
+  const s = String(subjectName || "");
+  for (const sub of RJ_SUBJECTS) { if (s.includes(sub.id)) return sub.id; }
+  return null;
+}
+// 과목 정렬 순위: 국어(1) → 영어(2) → 수학(3) → 사회(4) → 과학(5) → 그 외(99, 원래 순서 유지).
+function subjectOrder(subjectName) {
+  const canon = rjCanonicalSubject(subjectName);
+  const i = canon ? RJ_SUBJECTS.findIndex((s) => s.id === canon) : -1;
+  return i < 0 ? 99 : i + 1;
+}
+// 표시용 과목명: 끝에 붙은 괄호 설명("(중2-1)" 등)만 제거. 레벨 접두사("중A ")는 그대로 유지.
+// 원본 데이터(저장된 subjects 키)는 절대 변경하지 않는다 — 화면/PDF 표시 시점에만 적용.
+function displaySubjectName(id) {
+  return String(id || "").replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
 // ── CSV 파서 (따옴표·콤마·개행 처리) ───────────────────────────────
 function parseCSV(text) {
   text = String(text).replace(/^\uFEFF/, "");
@@ -573,4 +592,5 @@ window.RJReport = {
   fetchClassInActivities, fetchClassInScores, simulateClassInRows,
   monthToQuarter, defaultQuarterForMonth, roundDateInfo, sameQuarter,
   toYMD, roundIssueYMD, fmtIssueDateDisplay,
+  subjectOrder, displaySubjectName,
 };
