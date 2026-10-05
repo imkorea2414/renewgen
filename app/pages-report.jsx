@@ -14,8 +14,8 @@ function rcLoadComments() { try { return JSON.parse(localStorage.getItem(RC_COMM
 function rcSaveComments(c) { try { localStorage.setItem(RC_COMMENTS_KEY, JSON.stringify(c)); } catch (e) {} }
 const rcInitials = (nm) => (nm || "").slice(0, 2);
 const rcSubColor = (id) => {
-  const s = String(id || "");
-  return (RJReport.SUBJECTS.find((sub) => s.includes(sub.id)) || {}).color || "#5C6678";
+  const canon = RJReport.canonicalSubject(id);
+  return (RJReport.SUBJECTS.find((sub) => sub.id === canon) || {}).color || "#5C6678";
 };
 
 // ── 자동 코멘트 — 반 평균 대비 / 과목별 강·약점 / 회차 추이 / 약점 코칭 / 마무리
