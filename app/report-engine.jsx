@@ -21,8 +21,11 @@ const RJ_SUBJECT_KEYS = ["국어", "영어", "수학", "사회", "과학", "한�
 
 // 과목 ID(레벨 접두사·괄호 설명이 붙어 있을 수 있음, 예: "중A 사회 (중2-1)") 안에서
 // 표준 과목명을 부분 문자열로 탐지 — 정확히 일치하지 않아도 정렬/색상이 깨지지 않도록 함.
+//   NFC로 정규화 후 비교: ClassIn/일부 CSV 내보내기(주로 macOS 경유)는 한글을 NFD(자모 분해)로
+//   저장해 "국어"처럼 보여도 코드상 리터럴(NFC)과 바이트가 달라 includes()가 실패한다 —
+//   정규화는 비교에만 쓰고, 반환/저장되는 원본 문자열은 그대로 둔다(데이터 비변경).
 function rjCanonicalSubject(subjectName) {
-  const s = String(subjectName || "");
+  const s = String(subjectName || "").normalize("NFC");
   for (const sub of RJ_SUBJECTS) { if (s.includes(sub.id)) return sub.id; }
   return null;
 }
@@ -592,5 +595,5 @@ window.RJReport = {
   fetchClassInActivities, fetchClassInScores, simulateClassInRows,
   monthToQuarter, defaultQuarterForMonth, roundDateInfo, sameQuarter,
   toYMD, roundIssueYMD, fmtIssueDateDisplay,
-  subjectOrder, displaySubjectName,
+  subjectOrder, displaySubjectName, canonicalSubject: rjCanonicalSubject,
 };
