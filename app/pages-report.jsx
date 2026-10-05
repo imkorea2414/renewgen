@@ -395,7 +395,9 @@ function StudentReportCard({ round, store, studentKey, comment, onComment, edita
 
   const cText = (comment != null && comment !== "") ? comment : rcAutoComment(st, delta, { name: st.name, trend, roundLabel: round.label });
   const showLevel = st.level && st.level !== "기타";
-  const issueDate = rcFmtDate(round.createdAt);
+  // 발급일: round.issueDate(관리자가 지정) 우선, 없으면 생성 시각(createdAt) — 단일 소스를
+  // 관리자 화면·학생별 PDF·전체 PDF·학생 본인 화면이 전부 이 한 줄에서 함께 가져간다.
+  const issueDate = RJReport.fmtIssueDateDisplay(RJReport.roundIssueYMD(round));
   const barRounds = trend.map((t) => ({ label: t.shortLabel + " 월말평가", scores: t.subjects }));
 
   return (
@@ -810,15 +812,31 @@ function ReportManager({ viewOnly = false } = {}) {
 
   const reload = () => { const s = RJReport.loadStore(); setStore(s); return s; };
   const round = rounds.find((r) => r.id === roundId) || null;
+  // 발급일 입력칸 — round마다 독립적으로 저장(round.issueDate). 저장 전까지는
+  // 기존 발급일 계산 방식(createdAt)이 그대로 입력칸 기본값으로 보인다.
+  const [issueDateInput, setIssueDateInput] = useStR(() => (round ? RJReport.roundIssueYMD(round) : ""));
 
   // 현재 화면에 표시 중인 회차가 바뀌면(업로드·자동불러오기·삭제·데모 등 어떤 경로로든)
-  // 분기/월 선택 UI도 그 회차의 실제 연·월에 맞춰 함께 갱신한다 — 상태가 서로 어긋나지 않도록.
+  // 분기/월 선택 UI와 발급일 입력칸도 그 회차의 실제 값에 맞춰 함께 갱신한다 — 상태가 서로 어긋나지 않도록.
   useEffectR(() => {
     if (!round) return;
     const d = RJReport.roundDateInfo(round);
     setQuarterSel({ year: d.year, quarter: d.quarter });
     setSelMonth(d.month);
-  }, [round && round.id]);
+    setIssueDateInput(RJReport.roundIssueYMD(round));
+  }, [round && round.id, round && round.issueDate]);
+
+  // 발급일 저장 — round 객체에 직접 귀속시켜 다른 회차(월)에 영향을 주지 않는다.
+  //   로컬 저장 즉시 + 클라우드 push(fire-and-forget, 기존 pushRound 재사용).
+  const saveIssueDate = () => {
+    if (!round) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDateInput)) { showToast("날짜 형식이 올바르지 않습니다"); return; }
+    round.issueDate = issueDateInput;
+    RJReport.saveStore(store);
+    pushRound(round);
+    setStore({ ...store });
+    showToast("발급일을 저장했습니다");
+  };
 
   // CSV 업로드 · 자동 불러오기는 항상 "현재 선택된 연도·분기·월"을 기준으로 저장되도록,
   // 월/분기 선택이 바뀌면 업로드용 회차 이름 기본값도 함께 갱신한다(직접 수정은 그대로 유지).
@@ -1027,6 +1045,16 @@ function ReportManager({ viewOnly = false } = {}) {
           </div>
         )}
       </div>
+
+      {/* 발급일 — 이 회차(월)에만 귀속. 다른 월에는 영향 없음 */}
+      {!viewOnly && round && (
+        <div className="no-print" style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: "var(--ci-muted)" }}>발급일</span>
+          <input type="date" value={issueDateInput} onChange={(e) => setIssueDateInput(e.target.value)}
+            style={{ height: 36, borderRadius: 8, border: "1px solid var(--ci-line)", padding: "0 10px", fontSize: 13, fontFamily: "var(--font-en)" }} />
+          <button className="ci-act navy" onClick={saveIssueDate}><Icon name="check" size={12} /> 저장</button>
+        </div>
+      )}
 
       {!round ? (
         <div className="ci-card ci-card-pad no-print" style={{ textAlign: "center", padding: "56px 24px", color: "var(--ci-muted)" }}>

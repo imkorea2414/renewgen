@@ -24,6 +24,7 @@ async function rjPullRoundsFromCloud() {
       createdAt: r.created_at ? new Date(r.created_at).getTime() : (r.seq || 0),
       students: (r.data && r.data.students) || {},
       subjectsByLevel: (r.data && r.data.subjectsByLevel) || {},
+      issueDate: (r.data && r.data.issueDate) || null,
     }));
     return { ok: true, rounds };
   } catch (e) { return { ok: false, error: String(e) }; }
@@ -39,7 +40,9 @@ async function rjPushRoundToCloud(round) {
       source: round.source || null,
       demo: !!round.demo,
       created_at: round.createdAt ? new Date(round.createdAt).toISOString() : new Date().toISOString(),
-      data: { students: round.students || {}, subjectsByLevel: round.subjectsByLevel || {} },
+      // issueDate는 새 컬럼을 만들지 않고 기존 data(jsonb)에 함께 싣는다 — 스키마 변경 없이
+      // round별로 귀속된 값을 그대로 클라우드에 왕복시킬 수 있다.
+      data: { students: round.students || {}, subjectsByLevel: round.subjectsByLevel || {}, issueDate: round.issueDate || null },
     };
     const { error } = await sb.from("report_rounds").upsert(row, { onConflict: "id" });
     return error ? { ok: false, error: error.message } : { ok: true };
