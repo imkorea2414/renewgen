@@ -366,6 +366,26 @@ function sameQuarter(round, quarterKey) {
   return d.year === quarterKey.year && d.quarter === quarterKey.quarter;
 }
 
+// ── 발급일(issueDate) ───────────────────────────────────────────
+//   round마다 독립적으로 저장되는 성적표 발급일. 관리자가 지정하지 않았으면
+//   (기존 데이터 호환) 회차 생성 시각(createdAt)을 그대로 발급일로 쓴다.
+function toYMD(ts) {
+  const d = new Date(ts || Date.now());
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+// round.issueDate("YYYY-MM-DD")가 있으면 그 값을, 없으면 createdAt 기준 날짜를 돌려준다.
+//   성적표 화면·PDF·학생 본인 화면이 전부 이 값 하나만 소스로 쓰도록 한다.
+function roundIssueYMD(round) {
+  if (round && typeof round.issueDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(round.issueDate)) return round.issueDate;
+  return toYMD(round && (round.createdAt || round.seq));
+}
+// "YYYY-MM-DD" → "YYYY.MM.DD." (성적표 표시용)
+function fmtIssueDateDisplay(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[1]}.${m[2]}.${m[3]}.` : "";
+}
+
 // ── 학생 추이 (회차별 평균 + 과목별 점수) ──────────────────────────
 //   uptoSeq 를 주면 그 회차까지만(이전 회차 누적) 반환 — 5월을 보면 6월이 안 나오게.
 //   quarterKey({year,quarter})를 주면 같은 분기(동일 연도+분기)의 회차만 남긴다 —
@@ -552,4 +572,5 @@ window.RJReport = {
   sortedRounds, studentTrend, rosterOf, shortLabel, genDemoStore,
   fetchClassInActivities, fetchClassInScores, simulateClassInRows,
   monthToQuarter, defaultQuarterForMonth, roundDateInfo, sameQuarter,
+  toYMD, roundIssueYMD, fmtIssueDateDisplay,
 };
