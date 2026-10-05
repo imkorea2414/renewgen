@@ -386,7 +386,10 @@ function StudentReportCard({ round, store, studentKey, comment, onComment, edita
   const dispAvg = dispTaken ? Math.round((takenScores.reduce((a, b) => a + b, 0) / dispTaken) * 10) / 10 : null;
 
   // 회차별 추이 (과목별 점수 포함) — 표·막대그래프 공용
-  const trend = useMemoR(() => RJReport.studentTrend(store, studentKey, round.seq), [store, studentKey, round.id, round.seq]);
+  // 분기(quarter)가 바뀌면 누적표·그래프·전월대비가 그 분기 기준으로 새로 시작하도록,
+  // round가 속한 분기(동일 연도+분기)의 회차만 추이에 포함한다 (다른 분기 성적과 섞이지 않음).
+  const dateInfo = useMemoR(() => RJReport.roundDateInfo(round), [round.id, round.label, round.createdAt, round.seq]);
+  const trend = useMemoR(() => RJReport.studentTrend(store, studentKey, round.seq, { year: dateInfo.year, quarter: dateInfo.quarter }), [store, studentKey, round.id, round.seq, dateInfo.year, dateInfo.quarter]);
   const prevAvg = trend.length >= 2 ? trend[trend.length - 2].avg : null;
   const delta = prevAvg != null && dispAvg != null ? Math.round((dispAvg - prevAvg) * 10) / 10 : null;
 
@@ -706,6 +709,19 @@ function ClassInImportModal({ defaultLabel, onClose, onImport }) {
   );
 }
 
+// ── 분기/월 선택 헬퍼 ─────────────────────────────────────────────
+//   연도+월이 일치하는 회차를 찾는다(라벨 파싱 기반 — report-engine.jsx의 roundDateInfo 재사용).
+function rcPickRoundFor(allRounds, year, month) {
+  return allRounds.find((r) => { const d = RJReport.roundDateInfo(r); return d.year === year && d.month === month; }) || null;
+}
+// 해당 연도·분기 안에서 "가장 최근 데이터가 존재하는 월"을 고른다. 데이터가 없으면
+// 분기의 첫 월(새 분기를 처음 시작할 때 자연스럽게 1번째 월부터 업로드하도록).
+function rcPickDefaultMonth(allRounds, year, quarter) {
+  const months = RJReport.QUARTER_MONTHS[quarter] || [];
+  const inQ = allRounds.filter((r) => { const d = RJReport.roundDateInfo(r); return d.year === year && d.quarter === quarter; });
+  return inQ.length ? RJReport.roundDateInfo(inQ[inQ.length - 1]).month : months[0];
+}
+
 // ── 관리자: 성적표 매니저 ─────────────────────────────────────────
 function ReportManager({ viewOnly = false } = {}) {
   const [store, setStore] = useStR(() => RJReport.loadStore());
@@ -769,12 +785,23 @@ function ReportManager({ viewOnly = false } = {}) {
     }
   };
   const rounds = RJReport.sortedRounds(store);
-  const [roundId, setRoundId] = useStR(() => (rounds[rounds.length - 1] || {}).id || null);
+  // 분기(quarter)가 바뀌면 월 버튼 목록·기본 선택월·roundLabel 기본값이 함께 갱신된다.
+  // 연도는 오늘 날짜를 기본값으로 삼고(별도 연도 선택 UI는 없음), 월 매칭 시 연도까지
+  // 함께 비교하므로 다른 연도의 같은 월 데이터와는 절대 섞이지 않는다.
+  const [quarterSel, setQuarterSel] = useStR(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), quarter: RJReport.defaultQuarterForMonth(now.getMonth() + 1) };
+  });
+  const [selMonth, setSelMonth] = useStR(() => rcPickDefaultMonth(rounds, quarterSel.year, quarterSel.quarter));
+  const [roundId, setRoundId] = useStR(() => {
+    const m = rcPickRoundFor(rounds, quarterSel.year, selMonth);
+    return m ? m.id : ((rounds[rounds.length - 1] || {}).id || null);
+  });
   const [selKey, setSelKey] = useStR(null);
   const [query, setQuery] = useStR("");
   const [levelFilter, setLevelFilter] = useStR("all");
   const [pending, setPending] = useStR([]);     // [{name,text,level,subject}]
-  const [roundLabel, setRoundLabel] = useStR(() => `2026 · ${new Date().getMonth() + 1}월 월말평가`);
+  const [roundLabel, setRoundLabel] = useStR(() => `${quarterSel.year} · ${selMonth}월 월말평가`);
   const [over, setOver] = useStR(false);
   const [ciOpen, setCiOpen] = useStR(false);   // 클래스인 시험 선택 모달
   const fileRef = useRefR(null);
@@ -782,7 +809,40 @@ function ReportManager({ viewOnly = false } = {}) {
   const { showToast } = useApp();
 
   const reload = () => { const s = RJReport.loadStore(); setStore(s); return s; };
-  const round = rounds.find((r) => r.id === roundId) || rounds[rounds.length - 1] || null;
+  const round = rounds.find((r) => r.id === roundId) || null;
+
+  // 현재 화면에 표시 중인 회차가 바뀌면(업로드·자동불러오기·삭제·데모 등 어떤 경로로든)
+  // 분기/월 선택 UI도 그 회차의 실제 연·월에 맞춰 함께 갱신한다 — 상태가 서로 어긋나지 않도록.
+  useEffectR(() => {
+    if (!round) return;
+    const d = RJReport.roundDateInfo(round);
+    setQuarterSel({ year: d.year, quarter: d.quarter });
+    setSelMonth(d.month);
+  }, [round && round.id]);
+
+  // CSV 업로드 · 자동 불러오기는 항상 "현재 선택된 연도·분기·월"을 기준으로 저장되도록,
+  // 월/분기 선택이 바뀌면 업로드용 회차 이름 기본값도 함께 갱신한다(직접 수정은 그대로 유지).
+  useEffectR(() => { setRoundLabel(`${quarterSel.year} · ${selMonth}월 월말평가`); }, [quarterSel.year, selMonth]);
+
+  // 분기 탭: 같은 연도 안에서 분기를 전환 — 데이터가 있으면 그 분기의 가장 최근 월을,
+  // 없으면 분기의 첫 월을 기본으로 선택한다.
+  const selectQuarter = (q) => {
+    const year = quarterSel.year;
+    const month = rcPickDefaultMonth(rounds, year, q);
+    const m = rcPickRoundFor(rounds, year, month);
+    setQuarterSel({ year, quarter: q });
+    setSelMonth(month);
+    setRoundId(m ? m.id : null);
+    setSelKey(null);
+  };
+  // 월 버튼: 분기에 속한 3개월 중 하나를 선택 — 데이터가 없는 월도 선택 가능해야
+  // (그 달의 첫 CSV를 업로드할 수 있어야 함) 비활성(disabled)으로 막지 않는다.
+  const selectMonth = (month) => {
+    setSelMonth(month);
+    const m = rcPickRoundFor(rounds, quarterSel.year, month);
+    setRoundId(m ? m.id : null);
+    setSelKey(null);
+  };
 
   const onFiles = async (fileList) => {
     const arr = Array.from(fileList).filter((f) => /\.csv$/i.test(f.name));
@@ -935,30 +995,50 @@ function ReportManager({ viewOnly = false } = {}) {
       </div>
       )}
 
+      {/* 분기 선택 */}
+      <div className="no-print" style={{ marginBottom: 10 }}>
+        <div className="ci-subtabs">
+          {[1, 2, 3].map((q) => (
+            <button key={q} className={"ci-subtab" + (quarterSel.quarter === q ? " active" : "")} onClick={() => selectQuarter(q)}>
+              {quarterSel.year}년 {q}분기
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 월 선택(선택된 분기 소속 3개월) + 회차 삭제 · 일괄 PDF */}
+      <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <div className="ci-subtabs">
+          {(RJReport.QUARTER_MONTHS[quarterSel.quarter] || []).map((month) => {
+            const m = rcPickRoundFor(rounds, quarterSel.year, month);
+            return (
+              <button key={month} className={"ci-subtab" + (month === selMonth ? " active" : "")} onClick={() => selectMonth(month)}>
+                {month}월{m && m.demo ? <span className="badge">데모</span> : !m ? <span className="badge">데이터 없음</span> : null}
+              </button>
+            );
+          })}
+        </div>
+        {round && (
+          <div style={{ display: "flex", gap: 8 }}>
+            {!viewOnly && <button className="ci-act" onClick={() => delRound(round.id)}><Icon name="trash" size={12} /> 회차 삭제</button>}
+            <button className="ci-act navy" onClick={() => print(round.id, filtered.map((s) => s.key))}>
+              <Icon name="pdf" size={13} /> 전체 {filtered.length}명 PDF
+            </button>
+          </div>
+        )}
+      </div>
+
       {!round ? (
         <div className="ci-card ci-card-pad no-print" style={{ textAlign: "center", padding: "56px 24px", color: "var(--ci-muted)" }}>
           <Icon name="folder" size={28} />
-          <p style={{ marginTop: 12, fontWeight: 700 }}>{viewOnly ? "관리자가 발행한 성적표가 아직 없습니다." : "아직 저장된 회차가 없습니다. 클래스인 성적 CSV를 업로드하거나 ‘클래스인에서 자동으로 불러오기’를 눌러주세요."}</p>
+          <p style={{ marginTop: 12, fontWeight: 700 }}>
+            {viewOnly
+              ? `${quarterSel.year}년 ${selMonth}월 — 관리자가 발행한 성적표가 아직 없습니다.`
+              : `${quarterSel.year}년 ${selMonth}월 성적표가 아직 없습니다. 클래스인 성적 CSV를 업로드하거나 ‘클래스인에서 자동으로 불러오기’를 눌러주세요.`}
+          </p>
         </div>
       ) : (
         <>
-          {/* 회차 칩 + 일괄 PDF */}
-          <div className="no-print" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
-            <div className="ci-subtabs">
-              {rounds.map((r) => (
-                <button key={r.id} className={"ci-subtab" + (r.id === roundId ? " active" : "")} onClick={() => { setRoundId(r.id); setSelKey(null); }}>
-                  {RJReport.shortLabel(r.label)}{r.demo && <span className="badge">데모</span>}
-                </button>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              {!viewOnly && <button className="ci-act" onClick={() => delRound(round.id)}><Icon name="trash" size={12} /> 회차 삭제</button>}
-              <button className="ci-act navy" onClick={() => print(round.id, filtered.map((s) => s.key))}>
-                <Icon name="pdf" size={13} /> 전체 {filtered.length}명 PDF
-              </button>
-            </div>
-          </div>
-
           <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 380px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
             {/* 학생 리스트 */}
             <div className="ci-card no-print" style={{ overflow: "hidden", position: "sticky", top: 12 }}>
