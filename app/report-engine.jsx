@@ -332,12 +332,49 @@ function addOrMergeRound(newRound) {
   return { round: newRound, merged: false };
 }
 
+// ── 분기(quarter) ───────────────────────────────────────────────
+//   정규 월말평가 분기: 1·2·3월=1분기, 5·6·7월=2분기, 9·10·11월=3분기.
+//   4·8·12월은 정규 월말평가 대상 외(분기 없음·null).
+const RJ_QUARTER_MONTHS = { 1: [1, 2, 3], 2: [5, 6, 7], 3: [9, 10, 11] };
+function monthToQuarter(month) {
+  const m = Number(month);
+  for (const q in RJ_QUARTER_MONTHS) if (RJ_QUARTER_MONTHS[q].includes(m)) return Number(q);
+  return null;
+}
+// 오늘 날짜 기준 "자연스러운 기본 분기" — 1~4월→1분기, 5~8월→2분기, 9~12월→3분기.
+function defaultQuarterForMonth(month) {
+  const m = Number(month);
+  if (m <= 4) return 1;
+  if (m <= 8) return 2;
+  return 3;
+}
+// round.label(예: "2026 · 5월 월말평가")에서 연도·월을 뽑는다. label에 없으면
+// createdAt/seq(타임스탬프)로 보완 — 기존 데이터(quarter 필드 없음)도 월만 보고
+// 자동으로 분기가 판별되도록 한다. DB/저장 구조는 그대로 두고 조회 시점에만 계산.
+function roundDateInfo(round) {
+  const label = String((round && round.label) || "");
+  const my = label.match(/(\d{1,2})\s*월/);
+  const yy = label.match(/(\d{4})/);
+  const d = new Date((round && (round.createdAt || round.seq)) || Date.now());
+  const month = my ? Number(my[1]) : d.getMonth() + 1;
+  const year = yy ? Number(yy[1]) : d.getFullYear();
+  return { year, month, quarter: monthToQuarter(month) };
+}
+function sameQuarter(round, quarterKey) {
+  if (!quarterKey) return true;
+  const d = roundDateInfo(round);
+  return d.year === quarterKey.year && d.quarter === quarterKey.quarter;
+}
+
 // ── 학생 추이 (회차별 평균 + 과목별 점수) ──────────────────────────
 //   uptoSeq 를 주면 그 회차까지만(이전 회차 누적) 반환 — 5월을 보면 6월이 안 나오게.
-function studentTrend(store, key, uptoSeq) {
+//   quarterKey({year,quarter})를 주면 같은 분기(동일 연도+분기)의 회차만 남긴다 —
+//   분기가 바뀌면 누적표·그래프·전월대비가 그 분기 기준으로 새로 시작하게 하기 위함.
+function studentTrend(store, key, uptoSeq, quarterKey) {
   return sortedRounds(store)
     .filter((r) => r.students[key])
     .filter((r) => uptoSeq == null || r.seq <= uptoSeq)
+    .filter((r) => sameQuarter(r, quarterKey))
     .map((r) => {
       const st = r.students[key];
       const subjects = {};
@@ -508,9 +545,11 @@ window.RJReport = {
   STORE_KEY: RJ_REPORT_STORE_KEY,
   CLASSIN_API: RJ_CLASSIN_API,
   SUBJECTS: RJ_SUBJECTS, SUBJECT_KEYS: RJ_SUBJECT_KEYS,
+  QUARTER_MONTHS: RJ_QUARTER_MONTHS,
   parseCSV, parseFileName, extractLevelSubject, parseSubjectRows, buildRound, buildRoundFromClassIn,
   loadStore, saveStore, clearStore, addRound, removeRound,
   findRoundByLabel, addOrMergeRound, mergeRoundInto, recomputeStats,
   sortedRounds, studentTrend, rosterOf, shortLabel, genDemoStore,
   fetchClassInActivities, fetchClassInScores, simulateClassInRows,
+  monthToQuarter, defaultQuarterForMonth, roundDateInfo, sameQuarter,
 };
