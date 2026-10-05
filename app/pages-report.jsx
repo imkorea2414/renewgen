@@ -13,10 +13,10 @@ const RC_COMMENTS_KEY = "rj_report_comments_v2";
 function rcLoadComments() { try { return JSON.parse(localStorage.getItem(RC_COMMENTS_KEY) || "{}"); } catch (e) { return {}; } }
 function rcSaveComments(c) { try { localStorage.setItem(RC_COMMENTS_KEY, JSON.stringify(c)); } catch (e) {} }
 const rcInitials = (nm) => (nm || "").slice(0, 2);
-// 과목 라벨에서 레벨 접두어(중A·고B·초1 등)를 떼어 짧게 표시.
-//   옛 데이터는 과목 키가 "고A 과학" 처럼 저장돼 라벨이 길어 겹쳐 보였음. 표시 전용 정규화.
-const rcSubjShort = (id) => String(id || "").replace(/^\s*(중|고|초)\s*[A-Za-z0-9]+\s+/, "");
-const rcSubColor = (id) => (RJReport.SUBJECTS.find((s) => s.id === id || s.id === rcSubjShort(id)) || {}).color || "#5C6678";
+const rcSubColor = (id) => {
+  const s = String(id || "");
+  return (RJReport.SUBJECTS.find((sub) => s.includes(sub.id)) || {}).color || "#5C6678";
+};
 
 // ── 자동 코멘트 — 반 평균 대비 / 과목별 강·약점 / 회차 추이 / 약점 코칭 / 마무리
 // 학생마다 점수·추이·반 위치가 달라서 자연스럽게 내용이 갈리도록 설계.
@@ -255,7 +255,7 @@ function RCScoreEditor({ st, onScoreChange }) {
           // key 에 현재 점수를 포함 → 저장/클라우드 동기화로 값이 바뀌면 입력칸이 remount 되어
           //   항상 실제 저장값을 표시(비제어 defaultValue 의 잔상 방지).
           <div key={sub + "=" + (v.score == null ? "" : v.score)} style={{ display: "grid", gridTemplateColumns: "1fr 90px 50px", gap: 10, alignItems: "center" }}>
-            <span style={{ fontSize: 13 }}>{rcSubjShort(sub)}</span>
+            <span style={{ fontSize: 13 }}>{RJReport.displaySubjectName(sub)}</span>
             <input type="number" defaultValue={v.score != null ? v.score : ""} min="0" max={v.max || 100} step="0.1" placeholder="—"
               onBlur={(e) => set(sub, e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
@@ -350,7 +350,7 @@ function RJSubjectBars({ subjects, rounds }) {
                   </g>
                 );
               })}
-              <text x={gx + groupW / 2} y={H - padB + 20} textAnchor="middle" fontSize="12.5" fontWeight="700" fill="#001D3D" style={{ fontFamily: "var(--font-kr)" }}>{rcSubjShort(sub)}</text>
+              <text x={gx + groupW / 2} y={H - padB + 20} textAnchor="middle" fontSize="12.5" fontWeight="700" fill="#001D3D" style={{ fontFamily: "var(--font-kr)" }}>{RJReport.displaySubjectName(sub)}</text>
             </g>
           );
         })}
@@ -374,11 +374,9 @@ function StudentReportCard({ round, store, studentKey, comment, onComment, edita
   // 표시용 과목 목록: 학생이 실제로 가진 과목 점수에서 직접 산출.
   //   옛 데이터는 과목 키가 "고A 국어"처럼 레벨이 박혀 있어 subjectsByLevel/짧은 키로
   //   찾으면 점수가 있어도 누락됨 → 학생 본인 subjects 키를 직접 써서 견고하게 표시.
-  const stdOrder = RJReport.SUBJECTS.map((s) => s.id);
-  const subjRank = (id) => { const i = stdOrder.indexOf(rcSubjShort(id)); return i < 0 ? 99 : i; };
   const takenSubs = Object.keys(st.subjects)
     .filter((id) => st.subjects[id] && st.subjects[id].score != null)
-    .sort((a, b) => subjRank(a) - subjRank(b));
+    .sort((a, b) => RJReport.subjectOrder(a) - RJReport.subjectOrder(b));
 
   // 평균·응시 과목 수도 실제 점수에서 재계산 (저장된 집계가 옛 데이터라 어긋나도 견고하게)
   const takenScores = takenSubs.map((id) => Number(st.subjects[id].score));
@@ -449,7 +447,7 @@ function StudentReportCard({ round, store, studentKey, comment, onComment, edita
             <tr>
               <th className="corner">구분</th>
               {takenSubs.map((id) => (
-                <th key={id}><span className="rc-subdot" style={{ background: rcSubColor(id) }} />{rcSubjShort(id)}</th>
+                <th key={id}><span className="rc-subdot" style={{ background: rcSubColor(id) }} />{RJReport.displaySubjectName(id)}</th>
               ))}
               <th className="avgcol">평균</th>
             </tr>
