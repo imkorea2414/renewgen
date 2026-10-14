@@ -59,7 +59,14 @@ create index if not exists board_posts_listing_idx
 --   실제 쓰기 가능 여부는 GRANT가 아니라 아래 4번 RLS(is_admin())가 결정한다 —
 --   즉 authenticated에게 INSERT/UPDATE/DELETE 권한을 주더라도, 관리자가 아니면
 --   RLS가 모든 행을 걸러내 실질적으로는 아무 것도 쓸 수 없다.
+--   REVOKE ALL로 먼저 비우고 GRANT하는 이유: 스키마 기본 권한(ALTER DEFAULT
+--   PRIVILEGES)이나 과거 수동 조정으로 의도치 않은 권한이 남아있을 가능성을
+--   없애고, 정확히 아래 두 줄이 명시하는 권한만 남긴다. REVOKE+GRANT 조합은
+--   몇 번을 재실행해도 항상 같은 최종 상태로 수렴하므로 멱등적이다.
+revoke all privileges on table public.board_posts from anon;
 grant select on public.board_posts to anon;
+
+revoke all privileges on table public.board_posts from authenticated;
 grant select, insert, update, delete on public.board_posts to authenticated;
 
 -- ── 3. updated_at 자동 갱신 ──────────────────────────────────────
