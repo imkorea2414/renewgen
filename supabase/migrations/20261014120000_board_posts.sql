@@ -70,21 +70,27 @@ create or replace trigger board_posts_touch
   for each row execute function public.touch_updated_at();
 
 -- ── 4. published_at: "최초 공개 시점" 고정 + 이후 변경 차단 ──────
---   · INSERT: status가 published으로 바로 생성되면 그 시점을 최초 공개일로 채운다.
---   · UPDATE: OLD.published_at이 이미 채워져 있으면(= 한 번이라도 공개된 적 있음)
+--   클라이언트가 INSERT/UPDATE 요청에 임의의 published_at 값을 실어 보내더라도
+--   그 값은 아래 로직에서 전부 무시된다 — published_at은 오직 이 트리거가
+--   DB 서버의 현재 시간(now())으로만 채우거나, NULL로만 비운다.
+--   · INSERT: status='published'이면 now()로, 아니면(draft/hidden/deleted) NULL로.
+--   · UPDATE이고 OLD.published_at이 이미 채워져 있으면(= 한 번이라도 공개된 적 있음)
 --     이번 UPDATE가 무엇을 하든(비공개 전환, 재공개, 다른 컬럼 수정, 심지어 누군가
 --     published_at을 직접 다른 값으로 바꾸려는 시도까지) 전부 무시하고 기존 값으로
 --     고정한다 — "최초 공개일 보호".
---   · UPDATE: OLD.published_at이 아직 비어 있던 글이 이번에 처음 공개로 바뀌면
---     그때 한 번만 채운다(기존 동작 그대로 유지).
+--   · UPDATE이고 OLD.published_at이 아직 비어 있으면(= 한 번도 공개된 적 없음)
+--     이번에 처음 published로 바뀌면 now()로, 그렇지 않으면(여전히 draft/hidden/
+--     deleted) NULL로 — 역시 클라이언트가 보낸 값과 무관하게 서버가 결정한다.
 create or replace function public.board_posts_set_published_at()
 returns trigger
 language plpgsql
 as $$
 begin
   if TG_OP = 'INSERT' then
-    if new.status = 'published' and new.published_at is null then
+    if new.status = 'published' then
       new.published_at := now();
+    else
+      new.published_at := null;
     end if;
     return new;
   end if;
@@ -95,9 +101,11 @@ begin
     return new;
   end if;
 
-  -- 아직 한 번도 공개된 적 없는 글이 이번 UPDATE로 처음 공개 전환되는 경우만 채운다.
-  if new.status = 'published' and new.published_at is null then
+  -- 아직 한 번도 공개된 적 없는 글 — 이번에 처음 공개로 바뀌면 now(), 아니면 NULL.
+  if new.status = 'published' then
     new.published_at := now();
+  else
+    new.published_at := null;
   end if;
   return new;
 end;
