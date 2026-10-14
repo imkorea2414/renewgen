@@ -2,6 +2,7 @@
    HomePage, CoursesPage, CourseDetailPage, LoginPage, SignupPage,
    MyPage, CartPage, CheckoutPage, PlayerPage, LivePage,
    InstructorsPage, InstructorDetailPage, CommunityPage,
+   NoticeListPage, NoticeDetailPage,
    TweaksPanel, useTweaks, TweakSection, TweakRadio, TweakColor, TweakToggle */
 
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -58,6 +59,10 @@ function Router() {
   if (seg[0] === "teacher") return (window.isStaff && window.isStaff(user)) ? <TeacherPage /> : <AdminDenied user={user} />;
   if (seg[0] === "about") return window.RJ_EDU_MODE ? <HomePage /> : <AboutPage />;
   if (seg[0] === "curriculum") return <CurriculumPage />;
+  if (seg[0] === "notice") {
+    if (seg[1]) return <NoticeDetailPage noticeId={seg[1]} />;
+    return <NoticeListPage />;
+  }
   if (seg[0] === "admissions") return window.RJ_EDU_MODE ? <HomePage /> : <AdmissionsPage />;
   if (seg[0] === "faq") return <FaqPage />;
   if (seg[0] === "terms") return <TermsPage />;
@@ -181,6 +186,7 @@ function App() {
             ["/courses/math-calc-2026", "강의 상세 — 미적분"],
             ["/instructors",       "강사진"],
             ["/curriculum",        "커리큘럼 · 연 3학기"],
+            ["/notice",            "공지사항 · 게시판"],
             ["/admissions",        "입시정보 · 점수로 증명"],
             ["/faq",               "FAQ"],
             ["/login",             "로그인"],

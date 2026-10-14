@@ -10,6 +10,7 @@ const ADMIN_TABS = [
   ["vod",     "강의 관리",      "VOD"],
   ["homework","과제 관리",      "Homework"],
   ["exam",    "시험 관리",      "Exam"],
+  ["board",   "게시판 관리",    "Board"],
   ["users",   "계정 관리",      "User"],
   ["classes", "코스 · 수업",    "Classroom"],
   ["subs",    "데이터 구독",    "Data Subscription"],
@@ -189,6 +190,9 @@ function AdminPage() {
 
         {/* ── 시험 관리 (Renewjen Exam) ── */}
         {tab === "exam" && window.ExamManager && <window.ExamManager />}
+
+        {/* ── 게시판 관리 (공지사항 · 학사일정 · 월간평가 · 이벤트 · 자료실) ── */}
+        {tab === "board" && window.BoardManager && <window.BoardManager />}
 
         {/* ── Classroom management ── */}
         {tab === "classes" && (

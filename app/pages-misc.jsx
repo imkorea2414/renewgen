@@ -1,4 +1,4 @@
-/* global React, INSTRUCTORS, COURSES, NOTICES, useApp, Icon, findInstructor */
+/* global React, INSTRUCTORS, COURSES, useApp, Icon, findInstructor */
 
 const { useState: useStateX } = React;
 
@@ -179,36 +179,15 @@ function CommunityPage() {
   );
 }
 
+// 공지사항은 app/pages-notice.jsx의 전용 게시판(/notice)으로 이전됐다 — 실제 데이터(board_posts)와
+// 연결된 그 화면으로 안내만 하고, 이 탭에서 별도의 목록을 다시 그리지 않는다(중복 구현 방지).
 function NoticesList() {
-  const pinned = NOTICES.filter((n) => n.pinned);
-  const rest = NOTICES.filter((n) => !n.pinned);
+  const { navigate } = useApp();
   return (
-    <div>
-      {pinned.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 32 }}>
-          {pinned.map((n) => (
-            <div key={n.id} className="card-ink" style={{ padding: 24 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontFamily: "var(--font-en)", fontSize: 11, letterSpacing: "0.16em", textTransform: "uppercase", color: "var(--rj-accent)" }}>
-                  <Icon name="pin" size={12} /> Pinned · {n.category}
-                </span>
-                <span className="num-en" style={{ fontSize: 12, color: "rgba(245,241,233,0.5)" }}>{n.date}</span>
-              </div>
-              <h3 style={{ fontFamily: "var(--font-kr-serif)", fontWeight: 500, fontSize: 24, letterSpacing: "-0.025em", margin: 0, lineHeight: 1.25 }}>{n.title}</h3>
-            </div>
-          ))}
-        </div>
-      )}
-      <div style={{ border: "1px solid var(--rj-line)", borderRadius: "var(--rj-r)" }}>
-        {rest.map((n, i) => (
-          <button key={n.id} style={{ width: "100%", textAlign: "left", padding: "22px 28px", display: "grid", gridTemplateColumns: "120px 1fr 120px 32px", gap: 24, alignItems: "center", borderTop: i === 0 ? "none" : "1px solid var(--rj-faint)", background: "transparent", cursor: "pointer" }}>
-            <span className="tag">{n.category}</span>
-            <span style={{ fontFamily: "var(--font-kr-serif)", fontSize: 19, letterSpacing: "-0.025em" }}>{n.title}</span>
-            <span className="num-en" style={{ fontSize: 13, color: "var(--rj-muted)" }}>{n.date}</span>
-            <Icon name="chevron" size={16} className="" />
-          </button>
-        ))}
-      </div>
+    <div style={{ textAlign: "center", padding: "80px 24px" }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: "var(--rj-ink)" }}>공지사항은 새 게시판에서 확인하실 수 있습니다.</div>
+      <p style={{ fontSize: 13, color: "var(--rj-muted)", marginTop: 6 }}>공지사항·학사일정·월간평가·이벤트를 한 곳에서 모아 볼 수 있어요.</p>
+      <button className="btn btn-primary btn-sm" style={{ marginTop: 20 }} onClick={() => navigate("/notice")}>공지사항 바로가기</button>
     </div>
   );
 }
@@ -259,27 +238,15 @@ function QnAList() {
   );
 }
 
+// 과거엔 하드코딩된 샘플 이벤트 3개를 항상 보여줬다 — 실제로 진행 중이지 않은 이벤트가
+// 실제 이벤트로 오인될 수 있어 제거하고, 실데이터가 있는 게시판(/notice?cat=event)으로 연결한다.
 function EventsList() {
-  const events = [
-    { tag: "신규생", title: "첫 결제 7일 100% 환급 캠페인", body: "회원가입 후 첫 강의 결제 시 7일 안에 마음에 들지 않으면 100% 환불. 단순 변심도 가능합니다.", end: "2026.06.30", color: "ink" },
-    { tag: "장학", title: "리뉴젠 장학생 — 매월 8명", body: "성적 향상 폭이 가장 큰 8명에게 다음 시즌 강의 전액 지원.", end: "2026.05.31", color: "accent" },
-    { tag: "번들", title: "수능 영역 패키지 25% 할인", body: "국·수·영 + 탐구 1과목 묶음 결제 시 정상가 대비 25% 할인.", end: "2026.06.15", color: "cream" },
-  ];
+  const { navigate } = useApp();
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
-      {events.map((e, i) => (
-        <div key={i} className={e.color === "ink" ? "card-ink" : e.color === "accent" ? "card-accent" : "card"} style={{ padding: 28, display: "flex", flexDirection: "column", gap: 18, minHeight: 320 }}>
-          <span className="tag" style={{ alignSelf: "flex-start", borderColor: "currentColor" }}>{e.tag}</span>
-          <div style={{ flex: 1 }}>
-            <h3 style={{ fontFamily: "var(--font-kr-serif)", fontWeight: 500, fontSize: 26, letterSpacing: "-0.025em", margin: "0 0 12px", lineHeight: 1.15 }}>{e.title}</h3>
-            <p style={{ margin: 0, fontSize: 14, opacity: 0.85, lineHeight: 1.65 }}>{e.body}</p>
-          </div>
-          <div style={{ paddingTop: 16, borderTop: "1px solid currentColor", opacity: 0.9, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span className="num-en" style={{ fontSize: 12, letterSpacing: "0.14em", opacity: 0.7 }}>~ {e.end}</span>
-            <button className="btn-link" style={{ color: "inherit", fontSize: 13 }}>자세히 <Icon name="arrow" size={12} /></button>
-          </div>
-        </div>
-      ))}
+    <div style={{ textAlign: "center", padding: "80px 24px" }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: "var(--rj-ink)" }}>이벤트 소식은 공지사항 게시판에서 확인하실 수 있습니다.</div>
+      <p style={{ fontSize: 13, color: "var(--rj-muted)", marginTop: 6 }}>진행 중인 이벤트를 모아 볼 수 있어요.</p>
+      <button className="btn btn-primary btn-sm" style={{ marginTop: 20 }} onClick={() => navigate("/notice?cat=event")}>이벤트 보기</button>
     </div>
   );
 }

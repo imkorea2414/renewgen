@@ -1903,6 +1903,43 @@ html[data-home-style="academy"] .poster:hover {
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
 
+/* ── 공지사항 게시판 (/notice) — 기존 acad 토큰·카드·태그 그대로 재사용 ─────── */
+.rj-notice-toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 24px; }
+.rj-notice-search { flex: 1 1 220px; display: flex; align-items: center; gap: 8px; height: 42px; padding: 0 14px; border: 1.5px solid var(--acad-line); border-radius: 8px; background: #fff; }
+.rj-notice-search input { border: 0; outline: 0; background: transparent; flex: 1; font-size: 14px; font-family: var(--font-kr); color: var(--acad-ink); }
+.rj-notice-list { border: 1.5px solid var(--acad-line); border-radius: 14px; overflow: hidden; background: var(--acad-paper); }
+.rj-notice-row {
+  display: grid; grid-template-columns: 110px 1fr 120px 28px;
+  gap: 16px; align-items: center; padding: 18px 22px;
+  border-top: 1px solid var(--acad-line); text-align: left; width: 100%;
+  background: transparent; cursor: pointer; color: inherit;
+}
+.rj-notice-row:first-child { border-top: 0; }
+.rj-notice-row:hover { background: var(--acad-bg-2); }
+.rj-notice-row.pinned { background: rgba(255,214,10,0.10); }
+.rj-notice-title { font-weight: 700; font-size: 15.5px; color: var(--acad-ink); display: flex; align-items: center; gap: 8px; }
+.rj-notice-date { font-family: var(--font-en); font-size: 13px; color: var(--acad-muted); text-align: right; }
+.rj-notice-empty { text-align: center; padding: 80px 24px; color: var(--acad-muted); }
+.rj-notice-detail-head { border-bottom: 1.5px solid var(--acad-line); padding-bottom: 20px; margin-bottom: 28px; }
+.rj-notice-body { font-size: 15.5px; line-height: 1.8; color: var(--acad-ink); white-space: pre-wrap; }
+.rj-notice-examtable-wrap { margin: 24px 0; padding: 20px; background: var(--acad-bg); border-radius: 12px; }
+.rj-notice-examdate { font-size: 14.5px; color: var(--acad-ink); margin-bottom: 12px; }
+.rj-notice-examtable { width: 100%; border-collapse: collapse; }
+.rj-notice-examtable th { text-align: left; font-size: 12px; letter-spacing: 0.04em; color: var(--acad-muted); font-weight: 800; padding: 10px 14px; background: var(--acad-bg-2); border-bottom: 1px solid var(--acad-line); white-space: nowrap; }
+.rj-notice-examtable td { padding: 12px 14px; border-bottom: 1px solid var(--acad-line); font-size: 14px; }
+.rj-notice-examnote { margin: 14px 0 0; font-size: 13.5px; color: var(--acad-muted); }
+.rj-notice-nav { display: flex; justify-content: space-between; gap: 12px; margin-top: 32px; padding-top: 20px; border-top: 1px solid var(--acad-line); }
+.rj-notice-nav button { max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 860px) {
+  .rj-notice-row { grid-template-columns: 1fr; gap: 6px; padding: 16px 18px; }
+  .rj-notice-row > .rj-notice-date { text-align: left; }
+  .rj-notice-row > svg:last-child { display: none; }
+  .rj-notice-examtable-wrap { padding: 14px; }
+  .rj-notice-examtable { min-width: 480px; }
+  .rj-notice-nav { flex-direction: column; }
+  .rj-notice-nav button { max-width: 100%; text-align: left !important; }
+}
+
 /* STEP4: 학생용 차시(lessons) 플레이어 — PC: 우측 차시목록 / 모바일: 플레이어 아래 차시목록 */
 .rj-lessons-layout {
   display: grid;

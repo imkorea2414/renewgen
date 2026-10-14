@@ -238,6 +238,7 @@ const NAV = [
   { path: "/courses", label: "강의" },
   { path: "/instructors", label: "강사" },
   { path: "/curriculum", label: "커리큘럼" },
+  { path: "/notice", label: "공지사항" },
   { path: "/admissions", label: "입시정보" },
   { path: "/faq", label: "FAQ" },
 ];
@@ -324,7 +325,7 @@ function SiteFooter() {
             { h: "회사", items: ["브랜드 소개", "강사진", "공지사항", "채용"] },
             { h: "법적 고지", items: ["이용약관", "개인정보처리방침", "환불규정", "사업자 정보"] },
           ].map((col) => {
-            const LEGAL_ROUTES = { "이용약관": "/terms", "개인정보처리방침": "/privacy", "환불규정": "/refund" };
+            const LEGAL_ROUTES = { "이용약관": "/terms", "개인정보처리방침": "/privacy", "환불규정": "/refund", "공지사항": "/notice" };
             return (
             <div key={col.h}>
               <div className="label-cap" style={{ color: "rgba(245,241,233,0.5)", marginBottom: 14 }}>{col.h}</div>
