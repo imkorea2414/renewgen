@@ -5,7 +5,7 @@
 //   관리자 작성/수정/삭제는 app/pages-admin-board.jsx(BoardManager).
 // ════════════════════════════════════════════════════════════════════
 
-const { useState: useStN, useEffect: useEffectN } = React;
+const { useState: useStN, useEffect: useEffectN, useRef: useRefN } = React;
 
 const NOTICE_FILTERS = [{ id: "all", ko: "전체" }].concat(
   typeof window !== "undefined" && window.RJ_BOARD_CATEGORIES ? window.RJ_BOARD_CATEGORIES : []
@@ -22,15 +22,10 @@ function noticeQuery(params) {
 function NoticeListPage() {
   const { route, navigate } = useApp();
   // cat/q/page는 URL 쿼리 파라미터가 유일한 진실 소스 — 별도 state로 미러링하지 않는다.
-  // (한 번 route가 바뀔 때 "state 동기화 effect"와 "조회 effect"가 같은 렌더에서 함께 돌면
-  //  조회 effect가 아직 갱신되지 않은 이전 cat/page를 읽어 한 번 헛돌고 다음 렌더에서야
-  //  바로잡히는 경쟁이 생긴다 — route에서 직접 파생시켜 그 문제 자체를 없앤다.)
   const { cat, q: activeQ, page } = noticeQuery(route.params);
   const [qInput, setQInput] = useStN(activeQ);
   const [state, setState] = useStN({ loading: true, error: false, rows: [], total: 0 });
 
-  // 검색창 입력값은 Enter/검색 버튼 전까지는 URL과 별개로 로컬에서만 편집 — 그 전까지는
-  // URL의 q 값과 동기화해 둔다(다른 카테고리를 클릭하거나 뒤로가기했을 때 입력칸도 따라가도록).
   useEffectN(() => { setQInput(activeQ); }, [activeQ]);
 
   useEffectN(() => {
@@ -105,6 +100,7 @@ function NoticeListPage() {
               <button key={n.id} className={"rj-notice-row" + (n.is_pinned ? " pinned" : "")} onClick={() => navigate("/notice/" + n.id)}>
                 <span className="tag">{window.boardCategoryLabel(n.category)}</span>
                 <span className="rj-notice-title">
+                  {n.is_urgent && <span className="rj-notice-urgent-badge">긴급</span>}
                   {n.is_pinned && <Icon name="pin" size={13} />}
                   {n.title}
                   {Array.isArray(n.attachments) && n.attachments.length > 0 && <Icon name="pdf" size={13} />}
@@ -128,36 +124,168 @@ function NoticeListPage() {
   );
 }
 
-// ── 월간평가 표 ─────────────────────────────────────────────────────
+// ── 월간평가 표 — "3초 안에" 날짜·과목·범위를 파악하는 것이 목표 ───────
+//   맨 위에 가장 큰 글자로 디데이/평가일을 먼저 보여주고, 표는 그 아래
+//   보조 정보로 배치한다. 학년이 여러 개면 학년별로 묶어 스캔하기 쉽게 한다.
+function daysUntil(ymd) {
+  const m = String(ymd || "").match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  const target = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+
 function ExamInfoTable({ examInfo }) {
   if (!examInfo || !Array.isArray(examInfo.items) || examInfo.items.length === 0) return null;
   const hasPerItemDate = examInfo.items.some((it) => it.date);
+  const d = daysUntil(examInfo.examDate);
+  const dLabel = d == null ? "" : d > 0 ? `D-${d}` : d === 0 ? "D-DAY" : `${-d}일 지남`;
+
+  // 학년별로 묶어 스캔하기 쉽게(순서는 등장 순 유지).
+  const grades = [];
+  examInfo.items.forEach((it) => { if (it.grade && !grades.includes(it.grade)) grades.push(it.grade); });
+
   return (
     <div className="rj-notice-examtable-wrap">
       {examInfo.examDate && (
-        <div className="rj-notice-examdate">평가일: <strong>{window.fmtBoardDateLong(examInfo.examDate)}</strong></div>
+        <div className="rj-notice-examdate-hero">
+          <span className="rj-notice-examdate-dday">{dLabel}</span>
+          <span className="rj-notice-examdate-full">{window.fmtBoardDateLong(examInfo.examDate)}</span>
+        </div>
       )}
-      <div style={{ overflowX: "auto" }}>
-        <table className="rj-notice-examtable">
-          <thead>
-            <tr>
-              <th>학년</th><th>과목</th><th>평가 범위</th>
-              {hasPerItemDate && <th>평가일</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {examInfo.items.map((it, i) => (
-              <tr key={i}>
-                <td>{it.grade}</td>
-                <td>{it.subject}</td>
-                <td>{it.scope}</td>
-                {hasPerItemDate && <td>{it.date ? window.fmtBoardDateLong(it.date) : "—"}</td>}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {grades.length > 1 ? (
+        grades.map((g) => (
+          <div key={g} className="rj-notice-examgroup">
+            <div className="rj-notice-examgroup-title">{g}</div>
+            <ExamSubTable items={examInfo.items.filter((it) => it.grade === g)} hasPerItemDate={hasPerItemDate} showGrade={false} />
+          </div>
+        ))
+      ) : (
+        <ExamSubTable items={examInfo.items} hasPerItemDate={hasPerItemDate} showGrade={grades.length <= 1 && false} />
+      )}
       {examInfo.notice && <p className="rj-notice-examnote">{examInfo.notice}</p>}
+    </div>
+  );
+}
+function ExamSubTable({ items, hasPerItemDate }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table className="rj-notice-examtable">
+        <thead>
+          <tr><th>과목</th><th>평가 범위</th>{hasPerItemDate && <th>평가일</th>}</tr>
+        </thead>
+        <tbody>
+          {items.map((it, i) => (
+            <tr key={i}>
+              <td className="rj-notice-examsubject">{it.subject}</td>
+              <td>{it.scope}</td>
+              {hasPerItemDate && <td>{it.date ? window.fmtBoardDateLong(it.date) : "—"}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── 본문(HTML/평문 분기) ─────────────────────────────────────────────
+//   content_format='html' → DOMPurify로 거른 뒤 innerHTML(+본문이미지 서명URL
+//   지연 로딩). 'text'(과거 글 전부) → 지금까지와 동일하게 텍스트 그대로.
+function BoardBody({ content, contentFormat }) {
+  const ref = useRefN(null);
+  const isHtml = contentFormat === "html";
+  const safeHtml = isHtml ? (window.sanitizeBoardHtml ? window.sanitizeBoardHtml(content) : "") : "";
+
+  useEffectN(() => {
+    if (isHtml && ref.current && window.hydrateInlineImages) window.hydrateInlineImages(ref.current);
+  }, [isHtml, safeHtml]);
+
+  if (isHtml) {
+    return <div ref={ref} className="rj-notice-body rj-notice-body-html" dangerouslySetInnerHTML={{ __html: safeHtml }} />;
+  }
+  return <div className="rj-notice-body">{content}</div>;
+}
+
+// ── 첨부파일 목록(+이미지 확대보기) ──────────────────────────────────
+function AttachmentList({ postId }) {
+  const [rows, setRows] = useStN([]);
+  const [lightbox, setLightbox] = useStN(null); // { url, name } | null
+  const [busyId, setBusyId] = useStN(null);
+
+  useEffectN(() => {
+    let alive = true;
+    window.fetchPublicAttachments(postId).then((r) => { if (alive && r.ok) setRows(r.rows); });
+    return () => { alive = false; };
+  }, [postId]);
+
+  if (rows.length === 0) return null;
+
+  const open = async (a, download) => {
+    setBusyId(a.id);
+    const r = await window.getBoardAttachmentUrl(a.storage_path, 90, download ? a.file_name : undefined);
+    setBusyId(null);
+    if (!r.ok) { window.alert && window.alert("파일을 여는 데 실패했습니다. 잠시 후 다시 시도해 주세요."); return; }
+    if (!download && a.mime_type.startsWith("image/")) { setLightbox({ url: r.url, name: a.file_name }); return; }
+    window.open(r.url, "_blank", "noopener,noreferrer");
+  };
+
+  return (
+    <div className="rj-notice-attachments">
+      <div className="rj-notice-attachments-title">첨부파일 {rows.length}개</div>
+      <div className="rj-notice-attachments-grid">
+        {rows.map((a) => {
+          const isImage = a.mime_type.startsWith("image/");
+          return (
+            <div key={a.id} className="rj-notice-attach-card">
+              <Icon name={isImage ? "image" : "pdf"} size={18} />
+              <span className="rj-notice-attach-name" title={a.file_name}>{a.file_name}</span>
+              <span className="rj-notice-attach-actions">
+                <button className="btn btn-ghost btn-sm" disabled={busyId === a.id} onClick={() => open(a, false)}>
+                  {isImage ? "확대보기" : "미리보기"}
+                </button>
+                <button className="btn btn-ghost btn-sm" disabled={busyId === a.id} onClick={() => open(a, true)}>
+                  <Icon name="download" size={12} /> 다운로드
+                </button>
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {lightbox && (
+        <div className="rj-notice-lightbox" onClick={() => setLightbox(null)}>
+          <img src={lightbox.url} alt={lightbox.name} onClick={(e) => e.stopPropagation()} />
+          <button className="rj-notice-lightbox-close" onClick={() => setLightbox(null)}><Icon name="close" size={18} /></button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 이벤트 대표 이미지 ──────────────────────────────────────────────
+function HeroImage({ postId }) {
+  const [url, setUrl] = useStN("");
+  useEffectN(() => {
+    let alive = true;
+    window.fetchHeroImage(postId).then((r) => {
+      if (!alive || !r.ok || !r.attachment) return;
+      window.getBoardAttachmentUrl(r.attachment.storage_path, 90).then((su) => { if (alive && su.ok) setUrl(su.url); });
+    });
+    return () => { alive = false; };
+  }, [postId]);
+  if (!url) return null;
+  return <div className="rj-notice-hero"><img src={url} alt="" /></div>;
+}
+
+// 공개 상세 페이지와 관리자 미리보기가 똑같은 모습을 보장하도록 본문
+// 렌더링을 하나의 컴포넌트로 공유한다.
+function BoardPostBody({ post, showAttachments = true }) {
+  const hasRealId = post.id && post.id !== "preview";
+  return (
+    <div>
+      {post.category === "event" && hasRealId && <HeroImage postId={post.id} />}
+      {post.category === "examnotice" && <ExamInfoTable examInfo={post.exam_info} />}
+      <BoardBody content={post.content} contentFormat={post.content_format} />
+      {showAttachments && <AttachmentList postId={post.id} />}
     </div>
   );
 }
@@ -201,25 +329,14 @@ function NoticeDetailPage({ noticeId }) {
     <div className="page-enter container-wide" style={{ paddingTop: 56, paddingBottom: 120, maxWidth: 840, margin: "0 auto" }}>
       <div className="rj-notice-detail-head">
         <span className="tag">{window.boardCategoryLabel(post.category)}</span>
+        {post.is_urgent && <span className="rj-notice-urgent-badge" style={{ marginLeft: 8 }}>긴급</span>}
         <h1 style={{ fontFamily: "var(--font-kr-serif)", fontWeight: 600, fontSize: 32, letterSpacing: "-0.02em", margin: "14px 0 10px" }}>{post.title}</h1>
         <div style={{ fontSize: 13.5, color: "var(--acad-muted)" }}>
           리뉴젠 아카데미 · {window.fmtBoardDate(post.published_at)}
         </div>
       </div>
 
-      {post.category === "examnotice" && <ExamInfoTable examInfo={post.exam_info} />}
-
-      <div className="rj-notice-body">{post.content}</div>
-
-      {Array.isArray(post.attachments) && post.attachments.length > 0 && (
-        <div style={{ marginTop: 28, display: "grid", gap: 8 }}>
-          {post.attachments.map((a, i) => (
-            <a key={i} href={a.url} target="_blank" rel="noreferrer" className="btn btn-ghost btn-sm" style={{ justifySelf: "start" }}>
-              <Icon name="download" size={13} /> {a.name || "첨부파일"}
-            </a>
-          ))}
-        </div>
-      )}
+      <BoardPostBody post={post} />
 
       <div className="rj-notice-nav">
         {adj.prevPost ? (
@@ -239,3 +356,5 @@ function NoticeDetailPage({ noticeId }) {
 
 window.NoticeListPage = NoticeListPage;
 window.NoticeDetailPage = NoticeDetailPage;
+window.BoardPostBody = BoardPostBody;
+window.ExamInfoTable = ExamInfoTable;

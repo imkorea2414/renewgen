@@ -61,6 +61,7 @@ const Icon = ({ name, size = 18, className = "", strokeWidth = 1.5 }) => {
     key: <><circle cx="8" cy="8" r="4" /><path d="m11 11 9 9M17 17l2-2M14 14l2-2" /></>,
     server: <><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
     rocket: <><path d="M12 3c3 1.5 5 5 5 9l-3 2h-4l-3-2c0-4 2-7.5 5-9Z" /><circle cx="12" cy="9" r="1.6" /><path d="M9 16c-1.5 1-2 3-2 5 2 0 4-.5 5-2M15 16c1.5 1 2 3 2 5-2 0-4-.5-5-2" /></>,
+    image: <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="m4 18 5-5 4 4 3-3 4 4" /></>,
   };
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
