@@ -1922,8 +1922,54 @@ html[data-home-style="academy"] .poster:hover {
 .rj-notice-empty { text-align: center; padding: 80px 24px; color: var(--acad-muted); }
 .rj-notice-detail-head { border-bottom: 1.5px solid var(--acad-line); padding-bottom: 20px; margin-bottom: 28px; }
 .rj-notice-body { font-size: 15.5px; line-height: 1.8; color: var(--acad-ink); white-space: pre-wrap; }
+
+/* 긴급 공지 배지 — 브랜드가 "no red"이므로 옐로가 아니라 네이비 solid로
+   is_pinned(옐로 틴트 배경)과 시각적으로 분명히 구분한다. */
+.rj-notice-urgent-badge {
+  display: inline-flex; align-items: center; height: 20px; padding: 0 8px;
+  background: var(--acad-navy); color: #fff; font-size: 11px; font-weight: 800;
+  letter-spacing: 0.04em; border-radius: 5px; vertical-align: middle;
+}
+
+/* 본문(HTML) — sanitize된 에디터 출력 전용 타이포. 과거 평문(.rj-notice-body
+   단독)과 분리해 과거 글의 모양에는 전혀 영향을 주지 않는다. */
+.rj-notice-body-html h2 { font-family: var(--font-kr-serif); font-weight: 700; font-size: 22px; margin: 32px 0 12px; }
+.rj-notice-body-html h3 { font-family: var(--font-kr-serif); font-weight: 700; font-size: 18px; margin: 26px 0 10px; }
+.rj-notice-body-html p { margin: 0 0 16px; }
+.rj-notice-body-html ul, .rj-notice-body-html ol { margin: 0 0 16px; padding-left: 22px; }
+.rj-notice-body-html li { margin: 4px 0; }
+.rj-notice-body-html a { color: var(--acad-navy); text-decoration: underline; text-underline-offset: 2px; }
+.rj-notice-body-html img { max-width: 100%; height: auto; border-radius: 8px; margin: 12px 0; }
+.rj-notice-body-html table { width: 100%; border-collapse: collapse; margin: 16px 0; display: block; overflow-x: auto; }
+.rj-notice-body-html th, .rj-notice-body-html td { border: 1px solid var(--acad-line); padding: 8px 12px; font-size: 14.5px; }
+.rj-notice-body-html th { background: var(--acad-bg-2); font-weight: 800; }
+
+/* 이벤트 대표 이미지 */
+.rj-notice-hero { margin: 0 0 24px; border-radius: 14px; overflow: hidden; }
+.rj-notice-hero img { width: 100%; height: auto; display: block; }
+
+/* 첨부파일 목록 */
+.rj-notice-attachments { margin-top: 36px; padding-top: 24px; border-top: 1px solid var(--acad-line); }
+.rj-notice-attachments-title { font-size: 13px; font-weight: 800; color: var(--acad-muted); margin-bottom: 10px; }
+.rj-notice-attachments-grid { display: grid; gap: 8px; }
+.rj-notice-attach-card { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--acad-line); border-radius: 10px; background: var(--acad-paper); }
+.rj-notice-attach-name { flex: 1; font-size: 13.5px; font-weight: 600; color: var(--acad-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rj-notice-attach-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* 이미지 확대보기(라이트박스) */
+.rj-notice-lightbox { position: fixed; inset: 0; background: rgba(0,29,61,0.86); display: flex; align-items: center; justify-content: center; z-index: 999; padding: 24px; }
+.rj-notice-lightbox img { max-width: 100%; max-height: 100%; border-radius: 8px; }
+.rj-notice-lightbox-close { position: absolute; top: 20px; right: 20px; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.12); color: #fff; border: 0; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+
+/* 월간평가 — "3초 안에" 평가일을 가장 크게, 학년별로 묶어 과목/범위를 스캔하기 쉽게 */
 .rj-notice-examtable-wrap { margin: 24px 0; padding: 20px; background: var(--acad-bg); border-radius: 12px; }
-.rj-notice-examdate { font-size: 14.5px; color: var(--acad-ink); margin-bottom: 12px; }
+.rj-notice-examdate-hero { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+.rj-notice-examdate-dday { font-family: var(--font-en); font-size: 28px; font-weight: 800; color: var(--acad-navy); }
+.rj-notice-examdate-full { font-size: 15px; font-weight: 700; color: var(--acad-ink); }
+.rj-notice-examgroup { margin-bottom: 18px; }
+.rj-notice-examgroup:last-child { margin-bottom: 0; }
+.rj-notice-examgroup-title { display: inline-block; background: var(--acad-navy); color: #fff; font-size: 12.5px; font-weight: 800; padding: 4px 10px; border-radius: 6px; margin-bottom: 8px; }
+.rj-notice-examsubject { font-weight: 800; }
 .rj-notice-examtable { width: 100%; border-collapse: collapse; }
 .rj-notice-examtable th { text-align: left; font-size: 12px; letter-spacing: 0.04em; color: var(--acad-muted); font-weight: 800; padding: 10px 14px; background: var(--acad-bg-2); border-bottom: 1px solid var(--acad-line); white-space: nowrap; }
 .rj-notice-examtable td { padding: 12px 14px; border-bottom: 1px solid var(--acad-line); font-size: 14px; }
@@ -1938,6 +1984,9 @@ html[data-home-style="academy"] .poster:hover {
   .rj-notice-examtable { min-width: 480px; }
   .rj-notice-nav { flex-direction: column; }
   .rj-notice-nav button { max-width: 100%; text-align: left !important; }
+  .rj-notice-attach-card { flex-wrap: wrap; }
+  .rj-notice-attach-actions { width: 100%; justify-content: flex-start; }
+  .rj-notice-examdate-hero { flex-direction: column; gap: 4px; }
 }
 
 /* STEP4: 학생용 차시(lessons) 플레이어 — PC: 우측 차시목록 / 모바일: 플레이어 아래 차시목록 */
