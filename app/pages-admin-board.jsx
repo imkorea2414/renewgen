@@ -55,7 +55,7 @@ function BoardManager() {
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const askDelete = async (row) => {
-    if (!window.confirm(`"${row.title}" 게시글을 삭제하시겠습니까?\n삭제한 게시글은 목록과 공개 화면에서 즉시 사라집니다.`)) return;
+    if (!window.confirm(`"${row.title}" 게시글을 삭제하시겠습니까?\n삭제한 게시글은 목록과 공개 화면에서 즉시 사라지고, 복구할 수 없습니다.\n첨부된 파일(이미지/PDF)도 함께 영구 삭제됩니다.`)) return;
     const r = await window.deleteBoardPost(row.id);
     if (r.ok) { showToast(r.warning || "게시글을 삭제했습니다(첨부파일 포함)"); refresh(); }
     else showToast("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
@@ -254,6 +254,12 @@ function BoardPostForm({ post, onCancel, onSaved }) {
   }, []);
   const guardedCancel = () => {
     if (dirtyRef.current && !window.confirm("저장하지 않은 변경사항이 있습니다. 나가시겠습니까?")) return;
+    // "취소"는 마지막으로 저장된 content로 되돌아가는 것과 같다 — 그 이후
+    // 에디터에 추가했지만 끝내 저장하지 않은 본문 이미지는 전부 고아이므로
+    // 정리한다(실패해도 폼은 그대로 닫는다 — 베스트 에포트).
+    if (window.pruneUnreferencedInlineImages && savedPost && savedPost.id) {
+      window.pruneUnreferencedInlineImages(savedPost.id, savedPost.content || "");
+    }
     onCancel();
   };
 

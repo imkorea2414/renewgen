@@ -164,9 +164,19 @@ async function deleteBoardPost(id) {
   try {
     const list = await listBoardAttachments(id);
     if (list.ok && list.rows.length > 0) {
-      const results = await Promise.all(list.rows.map((a) => deleteBoardAttachment(a)));
-      const failed = results.filter((r) => !r.ok).length;
-      if (failed > 0) attachmentWarning = `첨부파일 ${failed}개는 정리하지 못했습니다(파일은 삭제됐으나 목록에 남아있을 수 있음)`;
+      let pending = list.rows;
+      let lastResults = [];
+      // 네트워크 일시 오류 등으로 일부만 실패하는 경우를 줄이기 위해, 실패한
+      // 것만 모아 최대 2회 더 재시도한다 — 게시글은 이미 목록에서 사라지므로
+      // (관리자가 다시 찾아와 수동으로 재시도할 방법이 없다), 여기서 최대한
+      // 정리를 끝내 두는 편이 안전하다.
+      for (let attempt = 0; attempt < 3 && pending.length > 0; attempt++) {
+        lastResults = await Promise.all(pending.map((a) => deleteBoardAttachment(a)));
+        pending = pending.filter((a, i) => !lastResults[i].ok);
+      }
+      if (pending.length > 0) {
+        attachmentWarning = `첨부파일 ${pending.length}개는 정리하지 못했습니다 — Supabase 대시보드에서 board_attachments 테이블의 post_id='${id}' 행과 board-attachments 버킷의 해당 경로를 직접 확인해 주세요.`;
+      }
     }
   } catch (e) { attachmentWarning = "첨부파일 정리 중 오류: " + String(e); }
 
