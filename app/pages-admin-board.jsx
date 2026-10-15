@@ -57,7 +57,7 @@ function BoardManager() {
   const askDelete = async (row) => {
     if (!window.confirm(`"${row.title}" 게시글을 삭제하시겠습니까?\n삭제한 게시글은 목록과 공개 화면에서 즉시 사라집니다.`)) return;
     const r = await window.deleteBoardPost(row.id);
-    if (r.ok) { showToast("게시글을 삭제했습니다"); refresh(); }
+    if (r.ok) { showToast(r.warning || "게시글을 삭제했습니다(첨부파일 포함)"); refresh(); }
     else showToast("삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
   };
 
@@ -292,6 +292,11 @@ function BoardPostForm({ post, onCancel, onSaved }) {
     setSaving(false);
     if (!r.ok) { setErr("저장하지 못했습니다. 입력 내용을 확인하고 다시 시도해 주세요."); return; }
     dirtyRef.current = false;
+    // 에디터에서 지웠거나 끝내 쓰이지 않은 본문 이미지(Storage+DB)를 베스트
+    // 에포트로 정리한다 — 실패해도 게시글 저장 자체는 이미 끝난 뒤라 무해하다.
+    if (window.pruneUnreferencedInlineImages && r.post && r.post.id) {
+      window.pruneUnreferencedInlineImages(r.post.id, cleanedHtml);
+    }
     if (keepOpen) {
       setSavedPost(r.post); setStatus(r.post.status);
       showToast("임시저장했습니다 — 이제 첨부파일/본문 이미지를 추가할 수 있습니다");

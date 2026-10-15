@@ -92,10 +92,20 @@ function BoardEditor({ value, onChange, postId, disabled }) {
   const postIdRef = React.useRef(postId);
   postIdRef.current = postId;
   const [ready, setReady] = React.useState(false);
+  // CDN이 막혀 있거나 tinymce 스크립트가 아직 로드되지 않은 경우를 대비한
+  // 폴백 — 전역 tinymce 없이 init()을 그대로 호출하면 ReferenceError로
+  // 관리자 작성 화면 전체가 하얀 화면으로 깨지므로, 반드시 먼저 확인한다.
+  const [loadError, setLoadError] = React.useState(false);
+  const fallbackInitial = React.useMemo(() => String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(), []); // eslint-disable-line
 
   React.useEffect(() => {
     let cancelled = false;
     let editorInstance = null;
+
+    if (typeof window.tinymce === "undefined" || !window.tinymce || typeof window.tinymce.init !== "function") {
+      setLoadError(true);
+      return () => { cancelled = true; };
+    }
 
     function uploadHandler(blobInfo) {
       return new Promise((resolve, reject) => {
@@ -118,7 +128,7 @@ function BoardEditor({ value, onChange, postId, disabled }) {
       });
     }
 
-    tinymce.init({
+    window.tinymce.init({
       target: hostRef.current,
       height: 420,
       menubar: false,
@@ -146,15 +156,30 @@ function BoardEditor({ value, onChange, postId, disabled }) {
           if (onChangeRef.current) onChangeRef.current(editor.getContent());
         });
       },
-    });
+    }).catch(() => { if (!cancelled) setLoadError(true); });
 
     return () => {
       cancelled = true;
-      try { tinymce.get(idRef.current) && tinymce.get(idRef.current).remove(); } catch (e) {}
+      try { window.tinymce.get(idRef.current) && window.tinymce.get(idRef.current).remove(); } catch (e) {}
       try { editorInstance && editorInstance.remove(); } catch (e) {}
     };
     // eslint-disable-next-line
   }, []);
+
+  if (loadError) {
+    return (
+      <div>
+        <div style={{ padding: "10px 12px", marginBottom: 8, background: "var(--ci-bg-2)", color: "var(--ci-muted)", fontSize: 12, borderRadius: 8, fontWeight: 700 }}>
+          서식 편집기를 불러오지 못했습니다(네트워크 문제일 수 있습니다) — 당분간 일반 텍스트로 작성해 주세요.
+        </div>
+        <textarea
+          defaultValue={fallbackInitial}
+          onChange={(e) => { if (onChangeRef.current) onChangeRef.current(window.textToSafeHtml ? window.textToSafeHtml(e.target.value) : e.target.value); }}
+          style={{ minHeight: 160, width: "100%", border: "1px solid var(--ci-line)", borderRadius: 8, padding: "9px 11px", fontFamily: "var(--font-kr)", fontSize: 13.5 }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>

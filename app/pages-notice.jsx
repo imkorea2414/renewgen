@@ -103,7 +103,6 @@ function NoticeListPage() {
                   {n.is_urgent && <span className="rj-notice-urgent-badge">긴급</span>}
                   {n.is_pinned && <Icon name="pin" size={13} />}
                   {n.title}
-                  {Array.isArray(n.attachments) && n.attachments.length > 0 && <Icon name="pdf" size={13} />}
                 </span>
                 <span className="rj-notice-date">{window.fmtBoardDate(n.published_at)}</span>
                 <Icon name="chevron" size={16} />
@@ -141,9 +140,15 @@ function ExamInfoTable({ examInfo }) {
   const d = daysUntil(examInfo.examDate);
   const dLabel = d == null ? "" : d > 0 ? `D-${d}` : d === 0 ? "D-DAY" : `${-d}일 지남`;
 
-  // 학년별로 묶어 스캔하기 쉽게(순서는 등장 순 유지).
+  // 학년별로 묶어 스캔하기 쉽게(순서는 등장 순 유지). 단, 학년이 비어있는
+  // 항목이 섞여 있으면(아직 입력 중인 임시저장/미리보기 등) 그룹 어디에도
+  // 속하지 못해 화면에서 통째로 빠져버리므로 — 전부 학년이 채워진 경우에만
+  // 그룹으로 나누고, 아니면 안전하게 단일 표로 전체를 보여준다(데이터 누락 방지).
   const grades = [];
-  examInfo.items.forEach((it) => { if (it.grade && !grades.includes(it.grade)) grades.push(it.grade); });
+  const allGraded = examInfo.items.every((it) => it.grade && String(it.grade).trim());
+  if (allGraded) {
+    examInfo.items.forEach((it) => { if (!grades.includes(it.grade)) grades.push(it.grade); });
+  }
 
   return (
     <div className="rj-notice-examtable-wrap">

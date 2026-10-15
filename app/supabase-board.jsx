@@ -48,7 +48,7 @@ async function fetchBoardPosts({ category, q, page = 1, pageSize = RJ_BOARD_PAGE
   if (!sb) return { ok: false, rows: [], total: 0, error: "no-db" };
   try {
     let query = sb.from("board_posts")
-      .select("id, category, title, is_pinned, published_at, attachments", { count: "exact" })
+      .select("id, category, title, is_pinned, is_urgent, published_at", { count: "exact" })
       .eq("status", "published");
     if (category && category !== "all") query = query.eq("category", category);
     if (q && q.trim()) query = query.ilike("title", "%" + q.trim() + "%");
@@ -148,13 +148,29 @@ async function saveBoardPost(post) {
 
 // 소프트 삭제 — 물리적으로 지우지 않고 status='deleted'로만 전환한다.
 //   이후 공개 조회(board_posts_public_read)와 관리자 기본 목록 둘 다에서 자동으로 제외된다.
+//   관리자 목록에서도 다시는 이 글을 찾을 수 없게 되므로(fetchBoardPostsAdmin이
+//   status='deleted'를 제외함) — 이 시점을 놓치면 첨부파일을 영영 정리할 길이
+//   없어진다. board_posts를 물리적으로 지우지 않아 FK의 ON DELETE CASCADE가
+//   발동하지 않으므로, 여기서 직접 첨부파일(Storage+DB)을 함께 정리한다.
 async function deleteBoardPost(id) {
   const sb = window.getSupabase && window.getSupabase();
   if (!sb || !id) return { ok: false };
   try {
     const { error } = await sb.from("board_posts").update({ status: "deleted" }).eq("id", id);
-    return error ? { ok: false, error: error.message } : { ok: true };
+    if (error) return { ok: false, error: error.message };
   } catch (e) { return { ok: false, error: String(e) }; }
+
+  let attachmentWarning = null;
+  try {
+    const list = await listBoardAttachments(id);
+    if (list.ok && list.rows.length > 0) {
+      const results = await Promise.all(list.rows.map((a) => deleteBoardAttachment(a)));
+      const failed = results.filter((r) => !r.ok).length;
+      if (failed > 0) attachmentWarning = `첨부파일 ${failed}개는 정리하지 못했습니다(파일은 삭제됐으나 목록에 남아있을 수 있음)`;
+    }
+  } catch (e) { attachmentWarning = "첨부파일 정리 중 오류: " + String(e); }
+
+  return attachmentWarning ? { ok: true, warning: attachmentWarning } : { ok: true };
 }
 
 // ── 첨부파일(board_attachments) ────────────────────────────────────
@@ -270,6 +286,31 @@ async function fetchPublicAttachments(postId) {
   return { ok: true, rows: r.rows.filter((a) => a.kind === "attachment") };
 }
 
+function extractReferencedBoardPaths(html) {
+  const set = new Set();
+  const re = /data-board-path="([^"]+)"/g;
+  let m;
+  while ((m = re.exec(String(html || "")))) set.add(m[1]);
+  return set;
+}
+
+// 저장 시점에 호출 — 본문(content)에 더 이상 data-board-path로 참조되지 않는
+// inline_image 첨부를 정리한다(에디터에서 이미지를 지웠거나, 올렸다가 저장
+// 전에 글 작성을 취소한 경우 등 — 방치하면 Storage에 영원히 고아로 남는다).
+// 베스트 에포트 정리이므로 실패해도 저장 자체를 막지 않는다.
+async function pruneUnreferencedInlineImages(postId, html) {
+  if (!postId) return { ok: true, removed: 0 };
+  try {
+    const list = await listBoardAttachments(postId);
+    if (!list.ok) return { ok: false, removed: 0 };
+    const referenced = extractReferencedBoardPaths(html);
+    const orphans = list.rows.filter((a) => a.kind === "inline_image" && !referenced.has(a.storage_path));
+    if (orphans.length === 0) return { ok: true, removed: 0 };
+    const results = await Promise.all(orphans.map((a) => deleteBoardAttachment(a)));
+    return { ok: true, removed: results.filter((r) => r.ok).length };
+  } catch (e) { return { ok: false, removed: 0, error: String(e) }; }
+}
+
 async function fetchHeroImage(postId) {
   const r = await listBoardAttachments(postId);
   if (!r.ok) return { ok: false, attachment: null };
@@ -316,4 +357,5 @@ Object.assign(window, {
   BOARD_ATTACH_MAX_BYTES, BOARD_ATTACH_ALLOWED_MIME,
   validateBoardAttachmentFile, uploadBoardAttachment, listBoardAttachments,
   fetchPublicAttachments, fetchHeroImage, getBoardAttachmentUrl, deleteBoardAttachment,
+  pruneUnreferencedInlineImages,
 });
